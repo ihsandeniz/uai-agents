@@ -1,0 +1,35 @@
+{
+  "name": "uai",
+  "private": true,
+  "version": "0.0.1",
+  "description": "UAI Agents Team — Multi-Agent Orchestration System",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "db:generate": "pnpm --filter @uai/db generate",
+    "db:migrate": "pnpm --filter @uai/db migrate",
+    "db:studio": "pnpm --filter @uai/db studio",
+    "infra": "docker compose up postgres redis -d",
+    "infra:down": "docker compose down postgres redis",
+    "infra:logs": "docker compose logs -f postgres redis",
+    "infra:full": "docker compose up -d",
+    "start": "docker compose up postgres redis -d && sleep 2 && pnpm db:migrate && pnpm dev",
+    "lint": "pnpm -r lint",
+    "test:llm": "tsx --env-file=.env scripts/test-llm.ts",
+    "cli": "pnpm --filter @uai/runtime cli"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp"
+    ]
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}

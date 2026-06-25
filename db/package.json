@@ -1,0 +1,26 @@
+{
+  "name": "@uai/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "schema.ts",
+  "exports": {
+    "./schema": "./schema.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "studio": "drizzle-kit studio",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.0",
+    "postgres": "^3.4.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}
