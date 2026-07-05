@@ -4,7 +4,7 @@ services:
     container_name: uai-postgres
     restart: unless-stopped
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-uai}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-uai_dev_2026}
@@ -22,7 +22,7 @@ services:
     container_name: uai-redis
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -40,7 +40,7 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     env_file:
       - .env
     environment:
@@ -67,7 +67,7 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     environment:
       PORT: "3001"
       NEXT_PUBLIC_RUNTIME_URL: http://runtime:3000
@@ -80,7 +80,7 @@ services:
     container_name: uai-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
