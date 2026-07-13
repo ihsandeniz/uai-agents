@@ -14,7 +14,7 @@
   "dependencies": {
     "@uai/db": "workspace:*",
     "@uai/shared": "workspace:*",
-    "drizzle-orm": "^0.44.0",
+    "drizzle-orm": "^0.45.2",
     "ioredis": "^5.6.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
