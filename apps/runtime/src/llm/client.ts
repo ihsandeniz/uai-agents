@@ -1,57 +1,88 @@
 import { logger } from '../logger.js';
+import { resolveProvider } from './config.js';
+import type {
+  ChatMessage,
+  CompletionOptions,
+  CompletionResult,
+  ModelId,
+} from './types.js';
 
-const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+// Tipleri geriye dönük uyumluluk için yeniden ihraç et (eski import yolları çalışsın).
+export type { ChatMessage, CompletionOptions, CompletionResult, ModelId } from './types.js';
 
-export type ModelId = 'sonnet' | 'haiku' | 'opus' | 'gemini-flash' | 'deepseek';
+/**
+ * OpenAI-uyumlu /chat/completions çağrısı — aktif sağlayıcıya göre
+ * baseURL/apiKey/model çözülür. OpenRouter, OpenAI, Gemini (openai-compat),
+ * Ollama ve herhangi bir OpenAI-uyumlu endpoint bu tek yol üzerinden çalışır.
+ */
+async function openaiCompatChat(
+  messages: Array<{ role: string; content: string }>,
+  opts: { model: ModelId; maxTokens: number; temperature: number; jsonMode?: boolean },
+): Promise<CompletionResult> {
+  const provider = resolveProvider();
+  const { modelName, pricing } = provider.resolve(opts.model);
 
-const MODEL_MAP: Record<ModelId, string> = {
-  sonnet: 'anthropic/claude-sonnet-4-6',
-  haiku: 'anthropic/claude-haiku-4-5',
-  opus: 'anthropic/claude-opus-4-6',
-  'gemini-flash': 'google/gemini-2.5-flash-preview',
-  deepseek: 'deepseek/deepseek-chat-v3',
-};
+  const body: Record<string, unknown> = {
+    model: modelName,
+    messages,
+    max_tokens: opts.maxTokens,
+    temperature: opts.temperature,
+  };
+  if (opts.jsonMode) {
+    body.response_format = { type: 'json_object' };
+  }
 
-// OpenRouter pricing (approx, per million tokens)
-const PRICING: Record<ModelId, { input: number; output: number }> = {
-  sonnet: { input: 3, output: 15 },
-  haiku: { input: 0.8, output: 4 },
-  opus: { input: 15, output: 75 },
-  'gemini-flash': { input: 0.15, output: 0.6 },
-  deepseek: { input: 0.27, output: 1.1 },
-};
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (provider.apiKey) {
+    headers.Authorization = `Bearer ${provider.apiKey}`;
+  }
+  // OpenRouter'a özgü (opsiyonel) atıf başlıkları — diğerleri yok sayar.
+  if (provider.id === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://uai.local';
+    headers['X-Title'] = 'UAI Agents Team';
+  }
 
-export interface CompletionOptions {
-  model?: ModelId;
-  prompt: string;
-  system?: string;
-  maxTokens?: number;
-  temperature?: number;
-  jsonMode?: boolean;
-}
+  const response = await fetch(`${provider.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`LLM API error (${provider.id}) ${response.status}: ${err}`);
+  }
 
-export interface CompletionResult {
-  text: string;
-  tokensUsed: { input: number; output: number };
-  costUsd: number;
-  model: string;
-}
+  const data = (await response.json()) as {
+    choices: Array<{ message: { content: string } }>;
+    usage?: { prompt_tokens: number; completion_tokens: number };
+    model?: string;
+  };
 
-function getApiKey(): string {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new Error('OPENROUTER_API_KEY is not set');
-  return key;
+  const text = data.choices[0]?.message?.content ?? '';
+  const tokensUsed = {
+    input: data.usage?.prompt_tokens ?? 0,
+    output: data.usage?.completion_tokens ?? 0,
+  };
+  const costUsd =
+    (tokensUsed.input * pricing.input + tokensUsed.output * pricing.output) / 1_000_000;
+
+  logger.info(
+    {
+      provider: provider.id,
+      model: data.model ?? modelName,
+      tokensIn: tokensUsed.input,
+      tokensOut: tokensUsed.output,
+      costUsd: costUsd.toFixed(6),
+    },
+    'LLM call complete',
+  );
+
+  return { text, tokensUsed, costUsd, model: data.model ?? modelName };
 }
 
 export async function complete(opts: CompletionOptions): Promise<CompletionResult> {
   const model = opts.model ?? 'sonnet';
-  const modelId = MODEL_MAP[model];
-
   logger.debug({ model, promptLength: opts.prompt.length }, 'LLM call start');
 
   const messages: Array<{ role: string; content: string }> = [];
@@ -60,56 +91,12 @@ export async function complete(opts: CompletionOptions): Promise<CompletionResul
   }
   messages.push({ role: 'user', content: opts.prompt });
 
-  const body: Record<string, unknown> = {
-    model: modelId,
-    messages,
-    max_tokens: opts.maxTokens ?? 4096,
+  return openaiCompatChat(messages, {
+    model,
+    maxTokens: opts.maxTokens ?? 4096,
     temperature: opts.temperature ?? 0.7,
-  };
-
-  if (opts.jsonMode) {
-    body.response_format = { type: 'json_object' };
-  }
-
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getApiKey()}`,
-      'HTTP-Referer': 'https://uai.local',
-      'X-Title': 'UAI Agents Team',
-    },
-    body: JSON.stringify(body),
+    jsonMode: opts.jsonMode,
   });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`OpenRouter API error ${response.status}: ${err}`);
-  }
-
-  const data = await response.json() as {
-    choices: Array<{ message: { content: string } }>;
-    usage: { prompt_tokens: number; completion_tokens: number };
-    model: string;
-  };
-
-  const text = data.choices[0]?.message?.content ?? '';
-
-  const tokensUsed = {
-    input: data.usage?.prompt_tokens ?? 0,
-    output: data.usage?.completion_tokens ?? 0,
-  };
-
-  const pricing = PRICING[model];
-  const costUsd =
-    (tokensUsed.input * pricing.input + tokensUsed.output * pricing.output) / 1_000_000;
-
-  logger.info(
-    { model: data.model, tokensIn: tokensUsed.input, tokensOut: tokensUsed.output, costUsd: costUsd.toFixed(6) },
-    'LLM call complete'
-  );
-
-  return { text, tokensUsed, costUsd, model: data.model ?? modelId };
 }
 
 /** Multi-turn chat completion — pass full message history */
@@ -118,53 +105,13 @@ export async function chat(
   opts?: { model?: ModelId; maxTokens?: number; temperature?: number },
 ): Promise<CompletionResult> {
   const model = opts?.model ?? 'sonnet';
-  const modelId = MODEL_MAP[model];
-
   logger.debug({ model, turns: messages.length }, 'LLM chat start');
 
-  const body = {
-    model: modelId,
-    messages,
-    max_tokens: opts?.maxTokens ?? 4096,
+  return openaiCompatChat(messages, {
+    model,
+    maxTokens: opts?.maxTokens ?? 4096,
     temperature: opts?.temperature ?? 0.5,
-  };
-
-  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getApiKey()}`,
-      'HTTP-Referer': 'https://uai.local',
-      'X-Title': 'UAI Agents Team',
-    },
-    body: JSON.stringify(body),
   });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`OpenRouter API error ${response.status}: ${err}`);
-  }
-
-  const data = await response.json() as {
-    choices: Array<{ message: { content: string } }>;
-    usage: { prompt_tokens: number; completion_tokens: number };
-    model: string;
-  };
-
-  const text = data.choices[0]?.message?.content ?? '';
-  const tokensUsed = {
-    input: data.usage?.prompt_tokens ?? 0,
-    output: data.usage?.completion_tokens ?? 0,
-  };
-  const pricing = PRICING[model];
-  const costUsd = (tokensUsed.input * pricing.input + tokensUsed.output * pricing.output) / 1_000_000;
-
-  logger.info(
-    { model: data.model, tokensIn: tokensUsed.input, tokensOut: tokensUsed.output, costUsd: costUsd.toFixed(6) },
-    'LLM chat complete',
-  );
-
-  return { text, tokensUsed, costUsd, model: data.model ?? modelId };
 }
 
 export async function embed(text: string): Promise<number[]> {
@@ -189,7 +136,7 @@ export async function embed(text: string): Promise<number[]> {
       return [];
     }
 
-    const data = await response.json() as { data: Array<{ embedding: number[] }> };
+    const data = (await response.json()) as { data: Array<{ embedding: number[] }> };
     return data.data[0]?.embedding ?? [];
   } catch (err) {
     logger.warn({ err }, 'embed() failed — falling back to keyword search');

@@ -3,6 +3,12 @@
   "private": true,
   "version": "0.0.1",
   "description": "UAI Agents Team — Multi-Agent Orchestration System",
+  "license": "MIT",
+  "author": "İhsan Deniz Tüfekci",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ihsandeniz/uai-agents.git"
+  },
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "pnpm -r --parallel dev",
