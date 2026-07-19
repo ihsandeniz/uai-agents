@@ -24,6 +24,8 @@
     "start": "docker compose up postgres redis -d && sleep 2 && pnpm db:migrate && pnpm dev",
     "lint": "pnpm -r lint",
     "test:llm": "tsx --env-file=.env scripts/test-llm.ts",
+    "test:mcp": "tsx scripts/test-mcp.ts",
+    "mcp:serve": "tsx scripts/uai-mcp-server.ts",
     "cli": "pnpm --filter @uai/runtime cli"
   },
   "engines": {

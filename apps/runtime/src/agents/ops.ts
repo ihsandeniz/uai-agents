@@ -27,6 +27,7 @@ export class OpsAgent extends BaseAgent {
     });
     // Ops can read/write files and run shell commands (primary use-case for infra work)
     this.registerTools('readFile', 'writeFile', 'runBash', 'searchWeb');
+    this.registerMcpTools();
   }
 
   protected async think(task: Task): Promise<string> {

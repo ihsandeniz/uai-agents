@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@uai/db": "workspace:*",
     "@uai/shared": "workspace:*",
     "drizzle-orm": "^0.45.2",

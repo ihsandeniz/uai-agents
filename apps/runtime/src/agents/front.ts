@@ -24,6 +24,7 @@ export class FrontAgent extends BaseAgent {
       systemPrompt: FRONT_SYSTEM,
     });
     this.registerTools('readFile', 'writeFile', 'searchWeb');
+    this.registerMcpTools();
   }
 
   protected async think(task: Task): Promise<string> {

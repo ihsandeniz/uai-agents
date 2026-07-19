@@ -5,7 +5,8 @@ import { publishEvent } from '../events.js';
 import { logger } from '../logger.js';
 import { ulid } from 'ulid';
 import { type ToolDefinition, type ToolCall, type ToolResult } from '../tools/types.js';
-import { TOOL_MAP, buildToolSchema } from '../tools/registry.js';
+import { TOOL_MAP, buildToolSchema, getMcpTools } from '../tools/registry.js';
+import { mcpEnabledForAgent } from '../mcp/config.js';
 
 export interface AgentConfig {
   name: AgentName;
@@ -41,6 +42,8 @@ export abstract class BaseAgent {
   get status(): AgentStatus { return this._status; }
   get totalCost(): number { return this._totalCost; }
   get totalTokens() { return { ...this._totalTokens }; }
+  /** Bu ajanın abone olduğu araç adları (gözlemlenebilirlik/test). */
+  get toolNames(): string[] { return this._tools.map((t) => t.name); }
 
   protected setStatus(s: AgentStatus) {
     this._status = s;
@@ -170,6 +173,24 @@ export abstract class BaseAgent {
       if (tool) this._tools.push(tool);
       else logger.warn({ agent: this.name, tool: name }, 'registerTools: unknown tool');
     }
+  }
+
+  /**
+   * Bu ajanı kayıtlı TÜM MCP-köprülü araçlara abone eder (FAZ 3).
+   * Worker ctor'unda registerTools'tan SONRA çağrılır. `MCP_AGENTS` env'i bu
+   * ajanı dışlıyorsa no-op; MCP kapalıysa (mcp__ araç yok) yine no-op.
+   * getOrCreateAgent lazy olduğu için ctor initMcp'den sonra koşar → araçlar hazır.
+   */
+  protected registerMcpTools(): void {
+    if (!mcpEnabledForAgent(this.name)) return;
+    let added = 0;
+    for (const tool of getMcpTools()) {
+      if (!this._tools.some((t) => t.name === tool.name)) {
+        this._tools.push(tool);
+        added++;
+      }
+    }
+    if (added) logger.info({ agent: this.name, count: added }, 'agent subscribed to MCP tools');
   }
 
   /**

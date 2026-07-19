@@ -194,6 +194,14 @@ export const ALL_TOOLS: ToolDefinition[] = [
 
 export const TOOL_MAP = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 
+/** MCP köprüsüyle eklenen araçların ad öneki — mcp__<server>__<tool>. */
+export const MCP_TOOL_PREFIX = 'mcp__';
+
+/** Kayıtlı tüm MCP-köprülü araçları döndürür (ajan aboneliği için). */
+export function getMcpTools(): ToolDefinition[] {
+  return ALL_TOOLS.filter((t) => t.name.startsWith(MCP_TOOL_PREFIX));
+}
+
 export function buildToolSchema(tools: ToolDefinition[]): string {
   return tools
     .map((t) => {

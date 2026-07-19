@@ -1,0 +1,22 @@
+[
+  {
+    "name": "filesystem",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    "initTimeoutMs": 15000
+  },
+  {
+    "name": "everything",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-everything"]
+  },
+  {
+    "name": "remote",
+    "transport": "http",
+    "url": "https://host.example/mcp",
+    "headers": { "Authorization": "Bearer REPLACE_ME" },
+    "initTimeoutMs": 20000
+  }
+]

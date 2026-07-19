@@ -21,6 +21,7 @@ export class ArchAgent extends BaseAgent {
       systemPrompt: ARCH_SYSTEM,
     });
     this.registerTools('readFile', 'searchWeb');
+    this.registerMcpTools();
   }
 
   protected async think(task: Task): Promise<string> {

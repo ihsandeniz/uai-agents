@@ -20,6 +20,7 @@ export class BrainAgent extends BaseAgent {
     });
     // Brain can read files, search the web, and run safe shell commands
     this.registerTools('readFile', 'writeFile', 'searchWeb', 'runBash');
+    this.registerMcpTools();
   }
 
   protected async think(task: Task): Promise<string> {

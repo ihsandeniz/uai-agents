@@ -1,0 +1,15 @@
+{
+  "//": "UAI'yi bir MCP sunucusu olarak Claude Code'a (veya başka bir MCP istemcisine) tanıtır.",
+  "//path": "Claude Code için: ~/.claude/mcp.json veya ilgili istemcinin MCP config dosyası.",
+  "//note": "cwd'yi uai repo köküne göre ayarla; MCP_SERVER_BASH_ALLOW allowlist önekleridir.",
+  "mcpServers": {
+    "uai-agents": {
+      "command": "pnpm",
+      "args": ["mcp:serve"],
+      "cwd": "/absolute/path/to/uai-agents",
+      "env": {
+        "MCP_SERVER_BASH_ALLOW": "git status,ls,cat"
+      }
+    }
+  }
+}

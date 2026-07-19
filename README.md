@@ -25,6 +25,7 @@ sistemi yok (in-process event bus), LLM sağlayıcısı `.env`'den tek satırla 
 - 🔗 **Webhook** — sonuçlar HTTP POST ile dışa gider; 5 hatadan sonra otomatik devre dışı
 - ⏸️ **Away mode** — sistem insan onayını bekler; kuyruk saat/gün bazlı duraklatılabilir
 - 🔑 **BYOK** — OpenRouter / OpenAI / Gemini / Ollama / özel endpoint arasında `.env` ile geçiş
+- 🔌 **MCP** — dış MCP sunucularının araçlarını ajanlara kazandırır (stdio + HTTP) **ve** UAI'yi MCP sunucusu olarak dışa sunar → [`docs/MCP.md`](./docs/MCP.md)
 
 ---
 
@@ -76,6 +77,26 @@ Tüm katman OpenAI-uyumlu tek istek arayüzüne indirgenmiştir (`apps/runtime/s
 
 ---
 
+## MCP (Model Context Protocol)
+
+UAI hem **MCP istemcisi** hem **MCP sunucusudur** — tamamen opsiyonel (env set
+edilmezse davranış değişmez).
+
+```bash
+# İstemci: dış MCP araçlarını ajanlara kazandır (mcp__<sunucu>__<araç>)
+MCP_ENABLED=true MCP_SERVER_COMMAND=npx \
+  MCP_SERVER_ARGS="-y @modelcontextprotocol/server-filesystem /tmp" pnpm dev
+# …veya çoklu sunucu için MCP_SERVERS='[{...}]' (stdio + http)
+
+# Sunucu: UAI'nin araçlarını dışa sun (stdio veya HTTP + X-Api-Key)
+pnpm mcp:serve
+```
+
+Köprüleme (JSON Schema → düz argüman), çoklu sunucu + dayanıklılık, ajan aboneliği
+(`MCP_AGENTS`), observability ve `uai_run_bash` allowlist ayrıntıları →
+[`docs/MCP.md`](./docs/MCP.md). Örnek yapılandırmalar → [`examples/mcp/`](./examples/mcp).
+Uçtan uca canlı test: `pnpm test:mcp`.
+
 ## Yapı
 
 ```
@@ -86,8 +107,9 @@ uai-agents/
 ├── packages/shared/ # Zod şemaları, ortak tipler, event tipleri
 ├── db/              # Drizzle şema + migration'lar + pgvector init
 ├── config/          # Away mode policy vb.
-├── docs/            # İlerleme raporları, ADR'ler
-└── scripts/         # Test & yardımcı scriptler
+├── docs/            # İlerleme raporları, ADR'ler, MCP.md
+├── examples/        # Örnek yapılandırmalar (mcp/)
+└── scripts/         # Test & yardımcı scriptler (uai-mcp-server.ts, test-mcp.ts)
 ```
 
 ## Stack
@@ -118,6 +140,8 @@ uai-agents/
 pnpm dev                              # tüm paketler paralel (watch)
 pnpm --filter @uai/runtime dev        # sadece runtime
 pnpm test                             # tüm paketlerde vitest
+pnpm test:mcp                         # MCP uçtan uca canlı test (stdio + HTTP)
+pnpm mcp:serve                        # UAI'yi MCP sunucusu olarak sun
 pnpm lint                             # tsc --noEmit (her pakette)
 pnpm db:generate                      # migration üret
 pnpm db:studio                        # Drizzle Studio

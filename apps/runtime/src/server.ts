@@ -14,6 +14,7 @@ import { registerWebhook, listWebhooks, deleteWebhook } from './webhooks/service
 import { checkAuth } from './middleware/auth.js';
 import { checkRateLimit, checkStrictRateLimit } from './middleware/ratelimit.js';
 import { renderMetrics, recordHttpRequest } from './metrics.js';
+import { initMcp, shutdownMcp } from './mcp/index.js';
 import { desc, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Task, AwayModePolicy } from '@uai/shared';
@@ -432,6 +433,10 @@ async function start() {
   // Load learning data from DB
   await learning.loadFromDb();
 
+  // Initialize MCP tools BEFORE serving — worker agents are constructed per-task
+  // in core.ts, so bridged MCP tools must be in TOOL_MAP before the first task.
+  await initMcp();
+
   // Initialize SSE event stream subscriber
   initEventStream();
 
@@ -441,3 +446,11 @@ async function start() {
 }
 
 start();
+
+// Graceful shutdown — MCP alt-süreçlerini kapat (sızdırma önle)
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(sig, () => {
+    logger.info({ sig }, 'shutting down');
+    void shutdownMcp().finally(() => process.exit(0));
+  });
+}
