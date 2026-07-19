@@ -6,6 +6,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Node%2020+-3178c6.svg)](https://www.typescriptlang.org/)
 [![BYOK](https://img.shields.io/badge/LLM-BYOK%20(OpenRouter%2FOpenAI%2FGemini%2FOllama)-8b5cf6.svg)](#llm-sağlayıcı-byok)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
+[![GitHub stars](https://img.shields.io/github/stars/ihsandeniz/uai-agents?style=social)](https://github.com/ihsandeniz/uai-agents/stargazers)
 
 Bir görev gönderirsin; **Core** ajan görevi analiz eder ve en uygun uzman ajana
 yönlendirir; **QA** ajanı sonucu doğrular. Geçmiş işler pgvector'e gömülür,

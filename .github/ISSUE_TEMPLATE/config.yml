@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Güvenlik açığı
+    url: https://github.com/ihsandeniz/uai-agents/security/advisories/new
+    about: Güvenlik açıklarını public issue yerine private advisory ile bildir.
+  - name: 💬 Soru & tartışma
+    url: https://github.com/ihsandeniz/uai-agents/discussions
+    about: Genel sorular ve fikirler için tartışmaları kullan.
