@@ -3,6 +3,7 @@ import { ALL_TOOLS, TOOL_MAP } from '../tools/registry.js';
 import { resolveMcpConfigs } from './config.js';
 import { McpClient } from './client.js';
 import { registerMcpTools } from './bridge.js';
+import { getMcpStats, type McpStatsSnapshot } from './observability.js';
 
 export { McpClient } from './client.js';
 export { resolveMcpConfig, resolveMcpConfigs, mcpEnabledForAgent } from './config.js';
@@ -14,6 +15,29 @@ export type { UaiMcpServerOptions } from './server.js';
 
 /** Süreç boyunca yaşayan aktif MCP istemcileri (FAZ 2: N sunucu). */
 const activeClients: McpClient[] = [];
+
+/** Bağlı MCP sunucularının özeti (dashboard /api/mcp için). */
+interface McpServerInfo {
+  name: string;
+  transport: string;
+  tools: number;
+}
+const serverInfo: McpServerInfo[] = [];
+
+export interface McpRuntimeInfo {
+  enabled: boolean;
+  servers: McpServerInfo[];
+  stats: McpStatsSnapshot;
+}
+
+/** Dashboard için MCP çalışma-zamanı görünümü: bağlı sunucular + çağrı istatistikleri. */
+export function getMcpRuntimeInfo(): McpRuntimeInfo {
+  return {
+    enabled: serverInfo.length > 0,
+    servers: serverInfo.map((s) => ({ ...s })),
+    stats: getMcpStats(),
+  };
+}
 
 /**
  * MCP alt sistemini başlatır. Ortamda MCP kapalıysa hiçbir şey yapmaz.
@@ -53,6 +77,7 @@ export async function initMcp(): Promise<void> {
       await client.connect();
       const names = await registerMcpTools(client, { all: ALL_TOOLS, map: TOOL_MAP });
       activeClients.push(client);
+      serverInfo.push({ name: cfg.name, transport: cfg.transport, tools: names.length });
       okServers++;
       okTools += names.length;
     } catch (err) {
@@ -71,4 +96,5 @@ export async function initMcp(): Promise<void> {
 export async function shutdownMcp(): Promise<void> {
   await Promise.all(activeClients.map((c) => c.close().catch(() => {})));
   activeClients.length = 0;
+  serverInfo.length = 0;
 }

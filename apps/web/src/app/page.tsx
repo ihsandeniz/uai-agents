@@ -51,22 +51,76 @@ interface ApprovalRequest {
   createdAt: string;
 }
 
-const RUNTIME_URL = process.env.NEXT_PUBLIC_RUNTIME_URL || 'http://localhost:3000';
+interface McpToolStat { calls: number; errors: number; totalMs: number; lastMs: number }
+interface McpInfo {
+  enabled: boolean;
+  servers: { name: string; transport: string; tools: number }[];
+  stats: { totalCalls: number; totalErrors: number; byTool: Record<string, McpToolStat> };
+}
 
-const AGENT_META: Record<string, { emoji: string; color: string; role: string }> = {
-  core: { emoji: '\u2699', color: 'var(--cyan)', role: 'Orchestrator' },
-  brain: { emoji: '\uD83E\uDDE0', color: '#a855f7', role: 'Reasoning' },
-  arch: { emoji: '\uD83C\uDFD7', color: 'var(--gold)', role: 'Architecture' },
-  front: { emoji: '\uD83C\uDFA8', color: '#00ff88', role: 'Frontend' },
-  ops: { emoji: '\u26A1', color: '#3388ff', role: 'Operations' },
-  qa: { emoji: '\u2713', color: '#00d4aa', role: 'Quality' },
+const RUNTIME_URL = process.env.NEXT_PUBLIC_RUNTIME_URL || 'http://localhost:3000';
+const API_KEY = process.env.NEXT_PUBLIC_UAI_API_KEY || '';
+
+/** Runtime fetch with X-Api-Key when configured (runtime may require auth). */
+function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = RUNTIME_URL + path;
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) };
+  if (API_KEY) headers['X-Api-Key'] = API_KEY;
+  return fetch(url, { ...init, headers });
+}
+
+const AGENT_META: Record<string, { emoji: string; role: string }> = {
+  core: { emoji: '⚙️', role: 'Orchestrator' },
+  brain: { emoji: '🧠', role: 'Reasoning' },
+  arch: { emoji: '🏗️', role: 'Architecture' },
+  front: { emoji: '🎨', role: 'Frontend' },
+  ops: { emoji: '⚡', role: 'Operations' },
+  qa: { emoji: '✓', role: 'Quality' },
 };
 
 function getStatusClass(status: string): string {
-  if (status === 'idle') return 'idle';
-  if (status === 'running' || status === 'working') return 'working';
+  if (status === 'working' || status === 'thinking' || status === 'running') return 'working';
   if (status === 'error' || status === 'failed') return 'error';
   return 'idle';
+}
+
+function evClass(type: string): 'ok' | 'work' | 'err' | 'info' {
+  if (type.includes('completed')) return 'ok';
+  if (type.includes('failed') || type.includes('error')) return 'err';
+  if (type.includes('started') || type.includes('status')) return 'work';
+  return 'info';
+}
+
+function taskClass(status: string): 'ok' | 'err' | 'work' {
+  if (status === 'done') return 'ok';
+  if (status === 'failed') return 'err';
+  return 'work';
+}
+
+/** Build a throughput sparkline from consecutive-sample deltas. */
+function Sparkline({ totals }: { totals: number[] }) {
+  const w = 120, h = 26;
+  if (totals.length < 3) return <svg className="spark" viewBox={`0 0 ${w} ${h}`} aria-hidden="true" />;
+  const values = totals.slice(1).map((v, i) => Math.max(0, v - totals[i]));
+  const max = Math.max(...values, 1);
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => [i * step, h - 3 - (v / max) * (h - 6)] as const);
+  const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const area = `${line} L${w},${h} L0,${h} Z`;
+  const [lx, ly] = pts[pts.length - 1];
+  return (
+    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="spark-g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="rgba(47,211,238,0.28)" />
+          <stop offset="1" stopColor="rgba(47,211,238,0)" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#spark-g)" />
+      <path d={line} fill="none" stroke="var(--cyan)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+      <circle cx={lx} cy={ly} r="2.4" fill="var(--cyan)" />
+    </svg>
+  );
 }
 
 export default function Dashboard() {
@@ -80,14 +134,11 @@ export default function Dashboard() {
     { name: 'ops', status: 'idle', cost: 0 },
     { name: 'qa', status: 'idle', cost: 0 },
   ]);
-  const [stats, setStats] = useState({
-    tasksCompleted: 0,
-    totalCost: 0,
-    totalEvents: 0,
-    uptime: 0,
-  });
+  const [stats, setStats] = useState({ tasksCompleted: 0, totalCost: 0, totalEvents: 0, uptime: 0 });
   const [queueStats, setQueueStats] = useState({ pending: 0, running: 0, completed: 0, failed: 0, avgDurationMs: 0, paused: false, totalCost: 0 });
   const [costAlert, setCostAlert] = useState(false);
+  const [authError, setAuthError] = useState(false);
+  const [spark, setSpark] = useState<number[]>([]);
 
   const [taskInput, setTaskInput] = useState('');
   const [taskLoading, setTaskLoading] = useState(false);
@@ -96,46 +147,35 @@ export default function Dashboard() {
   const [taskHistory, setTaskHistory] = useState<TaskRow[]>([]);
   const [activeTab, setActiveTab] = useState<'events' | 'tasks' | 'approvals'>('events');
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
-  const [selectedTask, setSelectedTask] = useState<TaskRow & { result?: { output?: string; confidence?: number; reasoning?: string; costUsd?: number } } | null>(null);
+  const [selectedTask, setSelectedTask] = useState<(TaskRow & { result?: { output?: string; confidence?: number; reasoning?: string; costUsd?: number } }) | null>(null);
   const [learningData, setLearningData] = useState<LearningData>({});
+  const [mcpInfo, setMcpInfo] = useState<McpInfo | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const eventCountRef = useRef(0);
 
   useEffect(() => {
-    const es = new EventSource(`${RUNTIME_URL}/api/stream`);
-
+    const es = new EventSource(`${RUNTIME_URL}/api/stream${API_KEY ? `?key=${encodeURIComponent(API_KEY)}` : ''}`);
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
 
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data) as DashboardEvent;
-
+        eventCountRef.current += 1;
         setEvents((prev) => [event, ...prev].slice(0, 100));
         setStats((prev) => ({ ...prev, totalEvents: prev.totalEvents + 1 }));
 
         if (event.type === 'agent_status') {
           const name = event.data.agent as string;
           const status = event.data.status as string;
-          if (name) {
-            setAgents((prev) =>
-              prev.map((a) => (a.name === name ? { ...a, status } : a))
-            );
-          }
+          if (name) setAgents((prev) => prev.map((a) => (a.name === name ? { ...a, status } : a)));
         }
-
         if (event.type === 'task_completed') {
           const cost = (event.data.cost as number) || 0;
-          setStats((prev) => ({
-            ...prev,
-            tasksCompleted: prev.tasksCompleted + 1,
-            totalCost: prev.totalCost + cost,
-          }));
+          setStats((prev) => ({ ...prev, tasksCompleted: prev.tasksCompleted + 1, totalCost: prev.totalCost + cost }));
           fetchTasks();
         }
-
-        if (event.type === 'cost_alert') {
-          setCostAlert(true);
-        }
+        if (event.type === 'cost_alert') setCostAlert(true);
       } catch {
         // ignore
       }
@@ -143,520 +183,388 @@ export default function Dashboard() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const [healthRes, awayRes, agentsRes, queueRes, learnRes, approvalsRes] = await Promise.all([
-          fetch(`${RUNTIME_URL}/health`),
-          fetch(`${RUNTIME_URL}/api/away/status`),
-          fetch(`${RUNTIME_URL}/api/agents`),
-          fetch(`${RUNTIME_URL}/api/queue`),
-          fetch(`${RUNTIME_URL}/api/learning`),
-          fetch(`${RUNTIME_URL}/api/approvals`),
+        const [healthRes, awayRes, agentsRes, queueRes, learnRes, approvalsRes, mcpRes] = await Promise.all([
+          apiFetch(`/health`),
+          apiFetch(`/api/away/status`),
+          apiFetch(`/api/agents`),
+          apiFetch(`/api/queue`),
+          apiFetch(`/api/learning`),
+          apiFetch(`/api/approvals`),
+          apiFetch(`/api/mcp`),
         ]);
-        const health = await healthRes.json();
-        const away = await awayRes.json();
-        const agentData = await agentsRes.json();
-        const qData = await queueRes.json();
-        const learnData = await learnRes.json();
-        if (approvalsRes.ok) setApprovals(await approvalsRes.json());
-
-        setStats((prev) => ({ ...prev, uptime: Math.round(health.uptime) }));
-        setAwayStatus(away);
-        setQueueStats(qData);
-        setLearningData(learnData);
         setConnected(true);
+        setAuthError([agentsRes, queueRes, learnRes].some((r) => r.status === 401));
+        setSpark((prev) => [...prev, eventCountRef.current].slice(-25));
 
-        setAgents((prev) =>
-          prev.map((a) => {
-            const server = agentData[a.name];
+        // Yalnızca yetkili (2xx) yanıtları kullan — 401 gövdesini render etme
+        if (healthRes.ok) { const h = await healthRes.json(); setStats((prev) => ({ ...prev, uptime: Math.round(h?.uptime ?? 0) })); }
+        if (awayRes.ok) setAwayStatus((await awayRes.json()) ?? { active: false });
+        if (agentsRes.ok) {
+          const agentData = await agentsRes.json();
+          setAgents((prev) => prev.map((a) => {
+            const server = agentData?.[a.name];
             return server ? { ...a, status: server.status, cost: server.cost } : a;
-          })
-        );
+          }));
+        }
+        if (queueRes.ok) { const q = await queueRes.json(); setQueueStats((prev) => ({ ...prev, ...q })); }
+        if (learnRes.ok) setLearningData((await learnRes.json()) ?? {});
+        if (approvalsRes.ok) setApprovals(await approvalsRes.json());
+        if (mcpRes.ok) setMcpInfo(await mcpRes.json());
       } catch {
         setConnected(false);
       }
     }, 5_000);
 
     fetchTasks();
-
-    return () => {
-      es.close();
-      clearInterval(pollInterval);
-    };
+    return () => { es.close(); clearInterval(pollInterval); };
   }, []);
 
   async function fetchTasks() {
     try {
-      const res = await fetch(`${RUNTIME_URL}/api/tasks?limit=15`);
-      const data = await res.json();
-      setTaskHistory(data);
-    } catch {
-      // ignore
-    }
+      const res = await apiFetch(`/api/tasks?limit=15`);
+      setTaskHistory(await res.json());
+    } catch { /* ignore */ }
   }
-
   async function fetchTaskDetail(id: string) {
     try {
-      const res = await fetch(`${RUNTIME_URL}/api/tasks/${id}`);
-      const data = await res.json();
-      setSelectedTask(data);
-    } catch {
-      // ignore
-    }
+      const res = await apiFetch(`/api/tasks/${id}`);
+      setSelectedTask(await res.json());
+    } catch { /* ignore */ }
   }
-
   async function submitTask() {
     if (!taskInput.trim() || taskLoading) return;
     setTaskLoading(true);
     try {
-      await fetch(`${RUNTIME_URL}/api/task`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal: taskInput }),
-      });
+      await apiFetch(`/api/task`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goal: taskInput }) });
       setTaskInput('');
       inputRef.current?.focus();
-    } catch {
-      // ignore
-    } finally {
-      setTaskLoading(false);
-    }
+    } catch { /* ignore */ } finally { setTaskLoading(false); }
   }
-
   async function startAway() {
     const goals = awayInput.split(';').map((g) => g.trim()).filter(Boolean);
     if (!goals.length) return;
     try {
-      await fetch(`${RUNTIME_URL}/api/away/start`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goals }),
-      });
+      await apiFetch(`/api/away/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goals }) });
       setAwayInput('');
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }
-
   async function stopAway() {
-    try {
-      await fetch(`${RUNTIME_URL}/api/away/stop`, { method: 'POST' });
-    } catch {
-      // ignore
-    }
+    try { await apiFetch(`/api/away/stop`, { method: 'POST' }); } catch { /* ignore */ }
   }
-
   async function toggleQueuePause() {
-    const endpoint = queueStats.paused ? 'resume' : 'pause';
-    try {
-      await fetch(`${RUNTIME_URL}/api/queue/${endpoint}`, { method: 'POST' });
-    } catch {
-      // ignore
-    }
+    try { await apiFetch(`/api/queue/${queueStats.paused ? 'resume' : 'pause'}`, { method: 'POST' }); } catch { /* ignore */ }
   }
-
   async function retryTask(taskId: string) {
     try {
-      await fetch(`${RUNTIME_URL}/api/task/retry`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId }),
-      });
+      await apiFetch(`/api/task/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId }) });
       fetchTasks();
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
+  }
+  async function resolveApproval(id: string, ok: boolean) {
+    try {
+      await apiFetch(`/api/approvals/${id}/${ok ? 'approve' : 'reject'}`, { method: 'POST' });
+      const r = await apiFetch(`/api/approvals`);
+      if (r.ok) setApprovals(await r.json());
+    } catch { /* ignore */ }
   }
 
-  const formatTime = (ts: string) => {
-    const d = new Date(ts);
-    return d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
-
-  const formatUptime = (s: number) => {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  };
+  const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formatUptime = (s: number) => { const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length;
+  const topTools = mcpInfo ? Object.entries(mcpInfo.stats.byTool).sort((a, b) => b[1].calls - a[1].calls).slice(0, 4) : [];
+  const maxToolCalls = topTools.length ? topTools[0][1].calls : 1;
 
   return (
-    <div className="dashboard-wrapper">
-      {/* TOPBAR */}
-      <div className="topbar">
-        <div className="topbar-brand">
-          <div className="brand-dot"></div>
-          <span className="brand-text">UAI Agents</span>
-          <span className="brand-version">v1.0</span>
+    <>
+      {/* ═══ TOPBAR ═══ */}
+      <header className="topbar">
+        <div className="brand">
+          <div className="brand-mark">U</div>
+          <span className="brand-name">UAI&nbsp;Agents</span>
+          <span className="chip">v1.0</span>
         </div>
-        <div className="topbar-controls">
-          {awayStatus.active && <span className="away-badge">AWAY MODE</span>}
-          {queueStats.paused && <span className="queue-paused-badge">PAUSED</span>}
-          <span className={`connection-dot ${connected ? 'connected' : 'disconnected'}`}></span>
-          <span className="connection-status" style={{ color: connected ? 'var(--status-success)' : 'var(--status-error)' }}>
-            {connected ? 'Live' : 'Offline'}
-          </span>
+        <span className="top-sub hide-sm">6 agents · real-time orchestration</span>
+        <div className="top-right">
+          {awayStatus.active && <span className="pill warn hide-sm"><span className="dot" />Away</span>}
+          <button className={`pill btn hide-sm ${queueStats.paused ? 'warn' : ''}`} onClick={toggleQueuePause}>
+            {queueStats.paused ? '▶ Resume queue' : '⏸ Pause queue'}
+          </button>
+          <span className={`pill ${connected ? 'live' : 'off'}`}><span className="dot" />{connected ? 'Live' : 'Offline'}</span>
         </div>
-      </div>
+      </header>
 
-      {/* MAIN LAYOUT: Sidebar + Content */}
-      <div className="dashboard-layout">
-        {/* SIDEBAR: Agent Cards */}
+      <div className="shell">
+        {/* ═══ SIDEBAR ═══ */}
         <aside className="sidebar">
-          <div className="sidebar-title">
-            <span className="section-title-line"></span>
-            Agents
-          </div>
-          <div className="agent-cards">
-            {agents.map((agent) => {
-              const meta = AGENT_META[agent.name] || { emoji: '\uD83E\uDD16', color: 'var(--cyan)', role: 'Agent' };
-              const statusClass = getStatusClass(agent.status);
-              return (
-                <div key={agent.name} className={`agent-card ${statusClass}`}>
-                  <div className="agent-header">
-                    <span className="agent-emoji" style={{ color: meta.color }}>{meta.emoji}</span>
-                    <div className="agent-info">
-                      <span className="agent-name">{agent.name}</span>
-                      <span className="agent-role">{meta.role}</span>
-                    </div>
-                    <span className={`agent-status-dot ${statusClass}`}></span>
-                  </div>
-                  <div className="agent-card-footer">
-                    <span className={`agent-status-badge ${statusClass}`}>
-                      {agent.status}
-                    </span>
-                    <span className="agent-cost gold-accent">${agent.cost.toFixed(4)}</span>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="side-head">
+            <span className="eyebrow">Agents</span>
+            <span className="side-count num">{agents.length}</span>
           </div>
 
-          {/* AWAY MODE in sidebar */}
-          {awayStatus.active ? (
-            <div className="away-sidebar-card">
-              <div className="section-subtitle gold-accent">Away Mode</div>
-              <div className="away-mini-stats">
-                <div className="away-mini-stat">
-                  <span className="away-mini-value">{awayStatus.elapsedMinutes ?? 0}m</span>
-                  <span className="away-mini-label">Time</span>
+          {agents.map((agent) => {
+            const meta = AGENT_META[agent.name] || { emoji: '🤖', role: 'Agent' };
+            const sc = getStatusClass(agent.status);
+            return (
+              <div key={agent.name} className={`agent ${sc === 'working' ? 'working' : ''}`}>
+                <span className="agent-emoji">{meta.emoji}</span>
+                <div>
+                  <div className="agent-name">{agent.name}</div>
+                  <div className="agent-role">{meta.role}</div>
                 </div>
-                <div className="away-mini-stat">
-                  <span className="away-mini-value">{awayStatus.tasksCompleted ?? 0}</span>
-                  <span className="away-mini-label">Done</span>
-                </div>
-                <div className="away-mini-stat">
-                  <span className="away-mini-value gold-accent">${(awayStatus.totalCost ?? 0).toFixed(3)}</span>
-                  <span className="away-mini-label">Cost</span>
+                <div className="agent-right">
+                  <span className={`sdot ${sc}`} title={agent.status} />
+                  <span className="agent-cost">${(agent.cost ?? 0).toFixed(4)}</span>
                 </div>
               </div>
-              <button className="stop-away-btn" onClick={stopAway}>Stop</button>
+            );
+          })}
+
+          <div className="side-divider" />
+
+          {awayStatus.active ? (
+            <div className="away">
+              <span className="eyebrow">Away mode · running</span>
+              <div className="away-row">
+                <div className="away-stat"><div className="away-val num">{awayStatus.elapsedMinutes ?? 0}m</div><div className="away-lbl">Time</div></div>
+                <div className="away-stat"><div className="away-val num">{awayStatus.tasksCompleted ?? 0}</div><div className="away-lbl">Done</div></div>
+                <div className="away-stat"><div className="away-val num gold">${(awayStatus.totalCost ?? 0).toFixed(2)}</div><div className="away-lbl">Cost</div></div>
+              </div>
+              <button className="btn-micro reject" onClick={stopAway}>Stop away mode</button>
             </div>
           ) : (
-            <div className="away-sidebar-card">
-              <div className="section-subtitle">Away Mode</div>
-              <input
-                className="task-input"
-                placeholder="Goals (semicolon separated)"
-                value={awayInput}
-                onChange={(e) => setAwayInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && startAway()}
-              />
-              <button className="submit-btn accent" onClick={startAway} disabled={!awayInput.trim()}>
-                Start Away
-              </button>
+            <div className="away">
+              <span className="eyebrow">Away mode</span>
+              <input className="cmd" style={{ padding: '9px 12px', fontSize: 13 }} placeholder="Goals (semicolon separated)" value={awayInput} onChange={(e) => setAwayInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && startAway()} />
+              <button className="btn-primary" style={{ justifyContent: 'center' }} onClick={startAway} disabled={!awayInput.trim()}>Start away mode</button>
             </div>
           )}
         </aside>
 
-        {/* MAIN CONTENT */}
-        <main className="main-content">
-          {/* COST ALERT BANNER */}
+        {/* ═══ MAIN ═══ */}
+        <main className="main">
           {costAlert && (
-            <div className="cost-alert-banner">
-              <span className="alert-text">Cost threshold exceeded! Total: ${queueStats.totalCost.toFixed(4)}</span>
-              <button className="alert-dismiss-btn" onClick={() => setCostAlert(false)}>x</button>
+            <div className="cost-alert">
+              <span>Cost threshold exceeded — total ${(queueStats.totalCost ?? 0).toFixed(4)}</span>
+              <button onClick={() => setCostAlert(false)} aria-label="Dismiss">×</button>
+            </div>
+          )}
+          {authError && (
+            <div className="cost-alert" style={{ color: 'var(--warn)', background: 'rgba(242,179,74,0.1)', borderColor: 'rgba(242,179,74,0.3)' }}>
+              <span>Runtime yetki istiyor (401). <span className="num">NEXT_PUBLIC_UAI_API_KEY</span> değerini runtime&apos;ın <span className="num">UAI_API_KEY</span>&apos;i ile eşleştirip web sunucusunu yeniden başlat.</span>
             </div>
           )}
 
-          {/* HERO STATS ROW */}
-          <div className="hero-stats">
-            <div className="stat-card">
-              <div className="stat-label">Completed</div>
-              <div className="stat-value">{queueStats.completed}</div>
+          {/* stat strip */}
+          <section className="stat-strip">
+            <div className="stat">
+              <div className="eyebrow">Completed</div>
+              <div className="stat-num">{queueStats.completed}</div>
+              <div className="stat-delta">{queueStats.failed > 0 ? <><span className="down">{queueStats.failed} failed</span></> : <span className="flat">all clear</span>}</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-label">Running / Queue</div>
-              <div className="stat-value" style={queueStats.running > 0 ? { background: 'linear-gradient(135deg, #3388ff, rgba(51,136,255,0.6))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' } : undefined}>
-                {queueStats.running}/{queueStats.pending}
+            <div className="stat">
+              <div className="eyebrow">Running / Queue</div>
+              <div className="stat-num">{queueStats.running}<span className="sep">/</span>{queueStats.pending}</div>
+              <div className="stat-delta"><span className="flat">avg {((queueStats.avgDurationMs ?? 0) / 1000).toFixed(1)}s</span></div>
+            </div>
+            <div className="stat">
+              <div className="eyebrow">Total cost</div>
+              <div className="stat-num gold">${(stats.totalCost ?? 0).toFixed(4)}</div>
+              <div className="stat-delta"><span className="flat">queue ${(queueStats.totalCost ?? 0).toFixed(4)}</span></div>
+            </div>
+            <div className="stat">
+              <div className="eyebrow">Uptime</div>
+              <div className="stat-num">{formatUptime(stats.uptime)}</div>
+              <div className="stat-delta"><span className={connected ? 'up' : 'down'}>{connected ? 'db · redis ok' : 'disconnected'}</span></div>
+            </div>
+            <div className="stat">
+              <div className="eyebrow">Events</div>
+              <div className="stat-num">{stats.totalEvents.toLocaleString()}</div>
+              <Sparkline totals={spark} />
+            </div>
+          </section>
+
+          {/* command bar */}
+          <section className="cmd">
+            <svg className="search-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+            <input ref={inputRef} placeholder="Send a task to the agents…  (Enter to submit)" value={taskInput} onChange={(e) => setTaskInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submitTask()} disabled={taskLoading} aria-label="Send a task" />
+            <button className="btn-primary" onClick={submitTask} disabled={taskLoading || !taskInput.trim()}>
+              {taskLoading ? 'Sending…' : 'Send'}
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+            </button>
+          </section>
+
+          {/* content */}
+          <section className="content">
+            {/* activity panel */}
+            <div className="panel">
+              <div className="panel-head">
+                <span className="panel-title">Activity</span>
+                <div className="seg">
+                  <button className={activeTab === 'events' ? 'on' : ''} onClick={() => setActiveTab('events')}>Events</button>
+                  <button className={activeTab === 'tasks' ? 'on' : ''} onClick={() => setActiveTab('tasks')}>Tasks</button>
+                  <button className={activeTab === 'approvals' ? 'on' : ''} onClick={() => setActiveTab('approvals')}>
+                    Approvals{pendingApprovals > 0 && <span className="count">{pendingApprovals}</span>}
+                  </button>
+                </div>
+              </div>
+
+              <div className="feed">
+                {activeTab === 'events' && (
+                  events.length === 0 ? <div className="empty">Waiting for events…</div> :
+                  events.map((event, i) => (
+                    <div key={i} className={`ev ${evClass(event.type)}`}>
+                      <span className={`tag ${evClass(event.type)}`}>{event.type}</span>
+                      <div className="ev-body">
+                        {typeof event.data.goal === 'string' && <div className="ev-msg">{(event.data.goal as string).slice(0, 120)}</div>}
+                        {typeof event.data.agent === 'string' && <div className="ev-meta">{event.data.agent as string}{typeof event.data.status === 'string' ? ` → ${event.data.status}` : ''}</div>}
+                      </div>
+                      <span className="ev-time">{formatTime(event.timestamp)}</span>
+                    </div>
+                  ))
+                )}
+
+                {activeTab === 'tasks' && (
+                  taskHistory.length === 0 ? <div className="empty">No tasks yet</div> :
+                  taskHistory.map((t) => (
+                    <div key={t.id} className={`ev clickable ${taskClass(t.status)}`} onClick={() => fetchTaskDetail(t.id)}>
+                      <span className={`tag ${taskClass(t.status)}`}>{t.status}</span>
+                      <div className="ev-body">
+                        <div className="ev-msg">{(t.goal ?? '').slice(0, 120)}</div>
+                        <div className="ev-meta">
+                          {t.assignedTo ? `${AGENT_META[t.assignedTo]?.emoji ?? ''} ${t.assignedTo}` : '—'}
+                          {t.result?.confidence != null && ` · conf ${Math.round(t.result.confidence * 100)}%`}
+                        </div>
+                      </div>
+                      <span className="ev-actions">
+                        {t.status === 'failed' && <button className="btn-micro retry" onClick={(e) => { e.stopPropagation(); retryTask(t.id); }}>Retry</button>}
+                        <span className="ev-time">{formatTime(t.createdAt)}</span>
+                      </span>
+                    </div>
+                  ))
+                )}
+
+                {activeTab === 'approvals' && (
+                  approvals.length === 0 ? <div className="empty">No pending approvals</div> :
+                  approvals.map((a) => {
+                    const cls = a.actionClass === 'RED' ? 'err' : a.actionClass === 'YELLOW' ? 'gold' : 'ok';
+                    return (
+                      <div key={a.id} className={`ev ${cls === 'gold' ? 'info' : cls}`}>
+                        <span className={`tag ${cls}`}>{a.actionClass}</span>
+                        <div className="ev-body">
+                          <div className="ev-msg">{a.description.slice(0, 140)}</div>
+                          <div className="ev-meta">{a.proposedBy} · {a.status}</div>
+                        </div>
+                        <span className="ev-actions">
+                          {a.status === 'pending' ? (
+                            <>
+                              <button className="btn-micro approve" onClick={() => resolveApproval(a.id, true)}>Approve</button>
+                              <button className="btn-micro reject" onClick={() => resolveApproval(a.id, false)}>Reject</button>
+                            </>
+                          ) : <span className="ev-time">{formatTime(a.createdAt)}</span>}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
-            <div className="stat-card gold-accent">
-              <div className="stat-label">Total Cost</div>
-              <div className="stat-value">${stats.totalCost.toFixed(4)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Uptime</div>
-              <div className="stat-value">{formatUptime(stats.uptime)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Events</div>
-              <div className="stat-value">{stats.totalEvents}</div>
-            </div>
-            <div className="queue-control">
-              <button
-                className={`queue-btn ${queueStats.paused ? 'paused' : 'running'}`}
-                onClick={toggleQueuePause}
-              >
-                {queueStats.paused ? 'Resume' : 'Pause'}
-              </button>
-              {queueStats.failed > 0 && <span className="failed-label">{queueStats.failed} failed</span>}
-            </div>
-          </div>
 
-          {/* TASK INPUT */}
-          <div className="task-input-section glass-card">
-            <h3 className="section-subtitle">New Task</h3>
-            <div className="input-row">
-              <input
-                ref={inputRef}
-                className="task-input"
-                placeholder="Enter a task for the agents... (Enter to submit)"
-                value={taskInput}
-                onChange={(e) => setTaskInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && submitTask()}
-                disabled={taskLoading}
-              />
-              <button className="submit-btn" onClick={submitTask} disabled={taskLoading || !taskInput.trim()}>
-                {taskLoading ? 'Sending...' : 'Send'}
-              </button>
-            </div>
-          </div>
-
-          {/* TABS: Events / Tasks / Approvals */}
-          <div className="glass-card tab-panel">
-            <div className="tab-bar">
-              <button
-                className={`tab-button ${activeTab === 'events' ? 'active' : ''}`}
-                onClick={() => setActiveTab('events')}
-              >
-                Events
-              </button>
-              <button
-                className={`tab-button ${activeTab === 'tasks' ? 'active' : ''}`}
-                onClick={() => setActiveTab('tasks')}
-              >
-                Tasks
-              </button>
-              <button
-                className={`tab-button ${activeTab === 'approvals' ? 'active' : ''}`}
-                onClick={() => setActiveTab('approvals')}
-              >
-                Approvals
-                {pendingApprovals > 0 && (
-                  <span className="approval-badge">{pendingApprovals}</span>
-                )}
-              </button>
-            </div>
-
-            <div className="tab-content scrollable">
-              {activeTab === 'approvals' ? (
-                <div className="event-list">
-                  {approvals.length === 0 ? (
-                    <div className="empty-state">No pending approvals</div>
-                  ) : (
-                    approvals.map((a) => (
-                      <div key={a.id} className="event-item">
-                        <span
-                          className="event-type"
-                          style={{
-                            background: a.actionClass === 'RED' ? 'rgba(255,23,68,0.15)' : a.actionClass === 'YELLOW' ? 'rgba(255,171,0,0.15)' : 'rgba(57,255,20,0.15)',
-                            color: a.actionClass === 'RED' ? 'var(--status-error)' : a.actionClass === 'YELLOW' ? 'var(--gold)' : 'var(--status-success)',
-                          }}
-                        >
-                          {a.actionClass}
-                        </span>
-                        <span className="event-type agent-badge">{a.proposedBy}</span>
-                        <span className="event-time">{formatTime(a.createdAt)}</span>
-                        {a.status === 'pending' && (
-                          <span style={{ display: 'inline-flex', gap: 4, marginLeft: 8 }}>
-                            <button
-                              className="btn-micro approve"
-                              onClick={async () => {
-                                await fetch(`${RUNTIME_URL}/api/approvals/${a.id}/approve`, { method: 'POST' });
-                                const r = await fetch(`${RUNTIME_URL}/api/approvals`);
-                                if (r.ok) setApprovals(await r.json());
-                              }}
-                            >
-                              Approve
-                            </button>
-                            <button
-                              className="btn-micro reject"
-                              onClick={async () => {
-                                await fetch(`${RUNTIME_URL}/api/approvals/${a.id}/reject`, { method: 'POST' });
-                                const r = await fetch(`${RUNTIME_URL}/api/approvals`);
-                                if (r.ok) setApprovals(await r.json());
-                              }}
-                            >
-                              Reject
-                            </button>
-                          </span>
-                        )}
-                        {a.status !== 'pending' && (
-                          <span style={{ marginLeft: 8, fontSize: 11, color: a.status === 'approved' ? 'var(--status-success)' : 'var(--status-error)' }}>
-                            {a.status}
-                          </span>
-                        )}
-                        <div style={{ marginTop: 4, color: 'var(--text-dim)', fontSize: 12, width: '100%' }}>
-                          {a.description.slice(0, 120)}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              ) : activeTab === 'events' ? (
-                <div className="event-list">
-                  {events.length === 0 ? (
-                    <div className="empty-state">Waiting for events...</div>
-                  ) : (
-                    events.map((event, i) => (
-                      <div key={i} className="event-item">
-                        <span className={`event-type ${event.type}`}>{event.type}</span>
-                        <span className="event-time">{formatTime(event.timestamp)}</span>
-                        {typeof event.data.goal === 'string' && (
-                          <div style={{ marginTop: 4, color: 'var(--text-dim)', fontSize: 12, width: '100%' }}>
-                            {(event.data.goal as string).slice(0, 100)}
+            {/* right rail */}
+            <div className="rail">
+              {/* learning */}
+              {Object.keys(learningData).length > 0 && (
+                <div className="panel">
+                  <div className="card-head"><span className="panel-title">Agent learning</span><span className="eyebrow">success</span></div>
+                  <div className="card-body">
+                    {Object.entries(learningData).map(([agent, data]) => {
+                      const meta = AGENT_META[agent] || { emoji: '🤖', role: 'Agent' };
+                      const sr = data?.successRate ?? 0;
+                      const pct = Math.round(sr * 100);
+                      const barColor = sr >= 0.8 ? 'var(--ok)' : sr >= 0.5 ? 'var(--warn)' : 'var(--err)';
+                      return (
+                        <div key={agent} className="learn">
+                          <span className="learn-emoji">{meta.emoji}</span>
+                          <div className="learn-meta">
+                            <div className="learn-name">{agent}</div>
+                            <div className="learn-sub">{data?.tasks ?? 0} tasks · ${(data?.avgCost ?? 0).toFixed(3)}/t</div>
                           </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              ) : (
-                <div className="event-list">
-                  {taskHistory.length === 0 ? (
-                    <div className="empty-state">No tasks yet...</div>
-                  ) : (
-                    taskHistory.map((t) => (
-                      <div key={t.id} className="event-item clickable" onClick={() => fetchTaskDetail(t.id)}>
-                        <span className={`event-type ${t.status === 'done' ? 'task_completed' : t.status === 'failed' ? 'task_failed' : 'task_started'}`}>
-                          {t.status}
-                        </span>
-                        {t.assignedTo && (
-                          <span className="event-type agent-badge">{t.assignedTo}</span>
-                        )}
-                        {t.result?.confidence != null && (
-                          <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                            {Math.round(t.result.confidence * 100)}%
-                          </span>
-                        )}
-                        <span className="event-time">{formatTime(t.createdAt)}</span>
-                        {t.status === 'failed' && (
-                          <button
-                            className="btn-micro retry"
-                            onClick={(e) => { e.stopPropagation(); retryTask(t.id); }}
-                          >
-                            Retry
-                          </button>
-                        )}
-                        <div style={{ marginTop: 4, color: 'var(--text-dim)', fontSize: 12, width: '100%' }}>
-                          {(t.goal ?? '').slice(0, 100)}
+                          <div className="bar"><span style={{ width: `${pct}%`, background: barColor }} /></div>
+                          <span className="learn-pct">{pct}%</span>
                         </div>
-                      </div>
-                    ))
-                  )}
+                      );
+                    })}
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
 
-          {/* LEARNING PANEL */}
-          {Object.keys(learningData).length > 0 && (
-            <div className="glass-card learning-section">
-              <h3 className="section-subtitle">Agent Learning</h3>
-              <div className="learning-grid">
-                {Object.entries(learningData).map(([agent, data]) => {
-                  const meta = AGENT_META[agent] || { emoji: '\uD83E\uDD16', color: 'var(--cyan)', role: 'Agent' };
-                  return (
-                    <div key={agent} className="learning-card">
-                      <div className="learning-agent-name">
-                        <span style={{ color: meta.color, marginRight: 6 }}>{meta.emoji}</span>
-                        {agent}
+              {/* MCP */}
+              <div className="panel">
+                <div className="card-head">
+                  <span className="panel-title">MCP</span>
+                  {mcpInfo?.enabled
+                    ? <span className="pill live"><span className="dot" />{mcpInfo.servers.length} connected</span>
+                    : <span className="pill"><span className="dot" />off</span>}
+                </div>
+                <div className="card-body">
+                  {!mcpInfo?.enabled ? (
+                    <div className="empty" style={{ padding: '24px 8px' }}>No MCP servers connected.<br />Set <span className="num">MCP_SERVERS</span> to bridge external tools.</div>
+                  ) : (
+                    <>
+                      <div className="mcp-servers">
+                        {mcpInfo.servers.map((s) => (
+                          <div key={s.name} className="mcp-srv">
+                            <span className="sdot ok" />
+                            <div><div className="name">{s.name}</div><div className="transport">{s.transport}</div></div>
+                            <span className="tools">{s.tools} tools</span>
+                          </div>
+                        ))}
                       </div>
-                      <div className="learning-stats">
-                        <span className="learning-stat">{data.tasks} tasks</span>
-                        <span className="learning-stat" style={{ color: data.successRate >= 0.8 ? 'var(--status-success)' : data.successRate >= 0.5 ? 'var(--gold)' : 'var(--status-error)' }}>
-                          {Math.round(data.successRate * 100)}%
-                        </span>
-                        <span className="learning-stat">conf: {data.avgConfidence.toFixed(2)}</span>
-                        <span className="learning-stat gold-accent">${data.avgCost.toFixed(4)}/task</span>
+                      <div className="mcp-metrics">
+                        <div className="mcp-metric"><div className="eyebrow">Tool calls</div><div className="v">{mcpInfo.stats.totalCalls}</div></div>
+                        <div className="mcp-metric"><div className="eyebrow">Errors</div><div className="v" style={{ color: mcpInfo.stats.totalErrors > 0 ? 'var(--err)' : 'var(--ok)' }}>{mcpInfo.stats.totalErrors}</div></div>
                       </div>
-                      {data.topCategories.length > 0 && (
-                        <div className="learning-categories">
-                          {data.topCategories.map((cat) => (
-                            <span key={cat} className="category-tag">{cat}</span>
+                      {topTools.length > 0 && (
+                        <div className="mcp-tool-list">
+                          {topTools.map(([name, st]) => (
+                            <div key={name} className="mcp-tool">
+                              <span className="tname" title={name}>{name}</span>
+                              <div className="tbar"><span style={{ width: `${Math.max(6, (st.calls / maxToolCalls) * 100)}%` }} /></div>
+                              <span className="tn">{st.calls}</span>
+                            </div>
                           ))}
                         </div>
                       )}
-                    </div>
-                  );
-                })}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
-          )}
+          </section>
         </main>
       </div>
 
-      {/* TASK DETAIL MODAL */}
+      {/* ═══ TASK DETAIL MODAL ═══ */}
       {selectedTask && (
         <div className="modal-overlay" onClick={() => setSelectedTask(null)}>
-          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Task Detail</h2>
-              <button className="modal-close-btn" onClick={() => setSelectedTask(null)}>x</button>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <h2>Task detail</h2>
+              <button className="close" onClick={() => setSelectedTask(null)} aria-label="Close">×</button>
             </div>
             <div className="modal-body">
-              <div className="detail-row">
-                <span className="detail-label">Goal</span>
-                <span className="detail-value">{selectedTask.goal}</span>
-              </div>
-              <div className="detail-row">
-                <span className="detail-label">Status</span>
-                <span className={`event-type ${selectedTask.status === 'done' ? 'task_completed' : selectedTask.status === 'failed' ? 'task_failed' : 'task_started'}`}>
-                  {selectedTask.status}
-                </span>
-              </div>
-              <div className="detail-row">
-                <span className="detail-label">Agent</span>
-                <span className="detail-value">
-                  {selectedTask.assignedTo ? (
-                    <>
-                      <span style={{ marginRight: 6 }}>{AGENT_META[selectedTask.assignedTo]?.emoji}</span>
-                      {selectedTask.assignedTo}
-                    </>
-                  ) : '-'}
-                </span>
-              </div>
+              <div className="detail-row"><span className="detail-label">Goal</span><span className="detail-value">{selectedTask.goal}</span></div>
+              <div className="detail-row"><span className="detail-label">Status</span><span className={`tag ${taskClass(selectedTask.status)}`} style={{ justifySelf: 'start' }}>{selectedTask.status}</span></div>
+              <div className="detail-row"><span className="detail-label">Agent</span><span className="detail-value">{selectedTask.assignedTo ? `${AGENT_META[selectedTask.assignedTo]?.emoji ?? ''} ${selectedTask.assignedTo}` : '—'}</span></div>
               {selectedTask.result && (
                 <>
-                  <div className="detail-row">
-                    <span className="detail-label">Confidence</span>
-                    <span className="detail-value">{(selectedTask.result.confidence ?? 0).toFixed(2)}</span>
-                  </div>
-                  <div className="detail-row">
-                    <span className="detail-label">Cost</span>
-                    <span className="detail-value gold-accent">${(selectedTask.result.costUsd ?? 0).toFixed(6)}</span>
-                  </div>
+                  <div className="detail-row"><span className="detail-label">Confidence</span><span className="detail-value num">{(selectedTask.result.confidence ?? 0).toFixed(2)}</span></div>
+                  <div className="detail-row"><span className="detail-label">Cost</span><span className="detail-value num gold">${(selectedTask.result.costUsd ?? 0).toFixed(6)}</span></div>
                   {selectedTask.result.reasoning && (
-                    <div className="detail-section">
-                      <span className="detail-label">Reasoning</span>
-                      <pre className="detail-pre">{selectedTask.result.reasoning}</pre>
-                    </div>
+                    <div className="detail-section"><span className="detail-label">Reasoning</span><pre className="detail-pre">{selectedTask.result.reasoning}</pre></div>
                   )}
                   {selectedTask.result.output && (
-                    <div className="detail-section">
-                      <span className="detail-label">Output</span>
-                      <pre className="detail-pre">{typeof selectedTask.result.output === 'string' ? selectedTask.result.output : JSON.stringify(selectedTask.result.output, null, 2)}</pre>
-                    </div>
+                    <div className="detail-section"><span className="detail-label">Output</span><pre className="detail-pre">{typeof selectedTask.result.output === 'string' ? selectedTask.result.output : JSON.stringify(selectedTask.result.output, null, 2)}</pre></div>
                   )}
                 </>
               )}
@@ -664,6 +572,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

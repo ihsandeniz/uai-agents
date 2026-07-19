@@ -14,7 +14,7 @@ import { registerWebhook, listWebhooks, deleteWebhook } from './webhooks/service
 import { checkAuth } from './middleware/auth.js';
 import { checkRateLimit, checkStrictRateLimit } from './middleware/ratelimit.js';
 import { renderMetrics, recordHttpRequest } from './metrics.js';
-import { initMcp, shutdownMcp } from './mcp/index.js';
+import { initMcp, shutdownMcp, getMcpRuntimeInfo } from './mcp/index.js';
 import { desc, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Task, AwayModePolicy } from '@uai/shared';
@@ -257,6 +257,12 @@ const server = createServer(async (req, res) => {
   // API: Learning stats
   if (url.pathname === '/api/learning' && req.method === 'GET') {
     json(res, 200, learning.getSummary());
+    return;
+  }
+
+  // API: MCP runtime info (connected servers + tool-call stats)
+  if (url.pathname === '/api/mcp' && req.method === 'GET') {
+    json(res, 200, getMcpRuntimeInfo());
     return;
   }
 
