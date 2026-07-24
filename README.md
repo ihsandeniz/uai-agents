@@ -34,16 +34,30 @@ sistemi yok (in-process event bus), LLM sağlayıcısı `.env`'den tek satırla 
 ## Hızlı Başlangıç
 
 **Gereksinimler:** Node.js ≥ 20, [pnpm](https://pnpm.io/), Docker (+ Compose).
+Hepsi **Windows 10/11, Linux ve macOS**'ta çalışır.
+
+### Kolay yol — kurulum sihirbazı (önerilen)
 
 ```bash
 git clone https://github.com/ihsandeniz/uai-agents.git
 cd uai-agents
+pnpm install
+pnpm setup        # interaktif: sağlayıcı seç → anahtar gir → .env yazılır → başlat
+```
 
-cp .env.example .env      # LLM_PROVIDER + anahtarını doldur (aşağıya bak)
+Sihirbaz gereksinimleri kontrol eder, LLM sağlayıcını sorar, `UAI_API_KEY`'i
+otomatik üretir, `.env`'i yazar ve istersen altyapıyı ayağa kaldırıp migration'ı
+çalıştırır. Bağımlılıksız, saf Node — her platformda aynı.
+
+### Elle kurulum (alternatif)
+
+```bash
+cp .env.example .env      # Windows: copy .env.example .env
+# .env içinde LLM_PROVIDER + anahtarını doldur (aşağıya bak)
 pnpm install
 
-docker compose up -d      # PostgreSQL (pgvector) + Redis
-pnpm db:migrate           # şema + pgvector eklentisi otomatik kurulur
+docker compose up -d --wait   # PostgreSQL (pgvector) + Redis, sağlıklı olana kadar bekler
+pnpm db:migrate               # şema + pgvector eklentisi otomatik kurulur
 
 pnpm --filter @uai/runtime dev
 curl http://localhost:3000/health

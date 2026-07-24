@@ -35,16 +35,30 @@ a single line in `.env`.
 ## Quick Start
 
 **Requirements:** Node.js ≥ 20, [pnpm](https://pnpm.io/), Docker (+ Compose).
+Runs on **Windows 10/11, Linux, and macOS**.
+
+### Easy path — setup wizard (recommended)
 
 ```bash
 git clone https://github.com/ihsandeniz/uai-agents.git
 cd uai-agents
+pnpm install
+pnpm setup        # interactive: pick provider → enter key → writes .env → launch
+```
 
-cp .env.example .env      # fill in LLM_PROVIDER + your key (see below)
+The wizard checks prerequisites, asks for your LLM provider, auto-generates
+`UAI_API_KEY`, writes `.env`, and can bring up the infrastructure and run
+migrations for you. Zero dependencies, pure Node — identical on every platform.
+
+### Manual setup (alternative)
+
+```bash
+cp .env.example .env      # Windows: copy .env.example .env
+# fill in LLM_PROVIDER + your key inside .env (see below)
 pnpm install
 
-docker compose up -d      # PostgreSQL (pgvector) + Redis
-pnpm db:migrate           # schema + pgvector extension installed automatically
+docker compose up -d --wait   # PostgreSQL (pgvector) + Redis, waits until healthy
+pnpm db:migrate               # schema + pgvector extension installed automatically
 
 pnpm --filter @uai/runtime dev
 curl http://localhost:3000/health
