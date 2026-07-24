@@ -1,5 +1,7 @@
 # UAI Agents Team
 
+[English](./README.en.md) · **Türkçe**
+
 > Kendi sunucunda çalışan, 6 ajanlı otonom multi-agent orkestrasyon sistemi.
 > A self-hostable, 6-agent autonomous orchestration system. Bring your own LLM key.
 
