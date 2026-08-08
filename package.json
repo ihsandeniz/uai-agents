@@ -32,13 +32,7 @@
   "engines": {
     "node": ">=20"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp"
-    ]
-  },
   "devDependencies": {
-    "tsx": "^4.21.0"
+    "tsx": "^4.23.11"
   }
 }

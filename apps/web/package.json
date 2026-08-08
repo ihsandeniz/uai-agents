@@ -11,7 +11,7 @@
   "dependencies": {
     "@uai/shared": "workspace:*",
     "geist": "^1.7.2",
-    "next": "^15.5.20",
+    "next": "^15.5.23",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
@@ -21,7 +21,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "eslint": "^9.39.5",
-    "eslint-config-next": "15.5.20",
+    "eslint-config-next": "15.5.23",
     "typescript": "^5.8.0"
   }
 }
