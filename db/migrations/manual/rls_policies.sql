@@ -1,7 +1,15 @@
 -- Row Level Security: sadece uygulama DB rolü erişebilir
--- Drizzle migration dışında manuel çalıştırılır:
---   psql "$DATABASE_URL" -f db/migrations/0004_rls_policies.sql
--- Not: Tablo sahibi veya superuser bağlantısı gerektirir.
+--
+-- ⚠️ BU BİR DRIZZLE MIGRATION'I DEĞİL. _journal.json'da kaydı YOK, dolayısıyla
+-- `pnpm db:migrate` bunu UYGULAMAZ — sıfır bir veritabanında RLS kapalı gelir
+-- (2026-08-08'de temiz bir postgres'te ölçüldü: pg_class.relrowsecurity hiçbir
+-- tabloda true değil). Bilinçli tercih: tablo sahibi/superuser bağlantısı ister.
+--
+-- Elle çalıştır:
+--   psql "$DATABASE_URL" -f db/migrations/manual/rls_policies.sql
+--
+-- Eskiden adı `0004_rls_policies.sql` idi; numaralı sıraya benzediği için
+-- migration sanılıyordu ve bir sonraki gerçek migration da 0004 olacaktı.
 
 ALTER TABLE "tasks" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "tasks" FORCE ROW LEVEL SECURITY;
