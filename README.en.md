@@ -23,6 +23,8 @@ a single line in `.env`.
 
 - 🧭 **Automatic routing** — the Core agent analyzes the task and picks the right specialist agent itself
 - 🧠 **Semantic memory** — past operations turn into embeddings; similar tasks are found via pgvector
+  (the embedding provider is configured separately; when off it **warns at startup** and falls back
+  to keyword search → [Embeddings](#embeddings-semantic-memory))
 - 📈 **Learning-based routing** — agent performance is persisted, so decisions improve over time
 - 🔀 **DAG-based parallelism** — subtasks run in parallel along a dependency graph, with deadlock protection
 - 🔗 **Webhooks** — results are pushed out via HTTP POST; auto-disabled after 5 failures
@@ -90,7 +92,38 @@ OPENROUTER_API_KEY=sk-or-...
 | `ollama` | — | Local, **free & unlimited** (`http://localhost:11434`) |
 | `custom` | `LLM_API_KEY` + `LLM_BASE_URL` | LM Studio / Groq / Together / vLLM |
 
-The entire layer is reduced to a single OpenAI-compatible request interface (`apps/runtime/src/llm/`).
+The entire **chat/completion** layer is reduced to a single OpenAI-compatible request interface
+(`apps/runtime/src/llm/`).
+
+### Embeddings (semantic memory)
+
+Embeddings are a **separate path** — not every provider serves `/embeddings` (OpenRouter does
+not), and vector sizes differ per provider. The `memory.embedding` column is `vector(1536)`, so
+a model with different dimensions is **rejected** rather than silently accepted.
+
+Resolution order (`resolveEmbedProvider`, `llm/config.ts`):
+
+| # | Source | When |
+|---|---|---|
+| 1 | `EMBED_ENABLED=false` | explicit opt-out |
+| 2 | `EMBED_BASE_URL` + `EMBED_MODEL` (+`EMBED_API_KEY`, `EMBED_DIMENSIONS`) | explicit config — overrides everything |
+| 3 | Active `LLM_PROVIDER` | if the provider serves embeddings (the BYOK-bound path) |
+| 4 | `OPENAI_API_KEY` | fallback (backwards compatible) |
+| 5 | — | **disabled**, with a reason |
+
+When disabled the system does **not** stay quiet: it logs a `WARN` at startup
+(`semantik hafıza KAPALI — …`) naming what is missing. Recall keeps working via keyword search.
+
+```bash
+# fully local with ollama plus a 1536-dimension embedding endpoint
+LLM_PROVIDER=ollama
+EMBED_BASE_URL=http://localhost:11434/v1
+EMBED_MODEL=mxbai-embed-large   # 1024-dim models are rejected — 1536 is required
+```
+
+> ℹ️ Before 2026-08-11 `embed()` sat **outside** this layer: it called `api.openai.com`
+> regardless of provider and returned an empty vector **silently** when the key was missing —
+> so semantic memory never worked in the recommended ollama setup, and nothing said so.
 
 ---
 
@@ -123,8 +156,8 @@ uai-agents/
 │   └── web/         # Next.js 15 dashboard
 ├── packages/shared/ # Zod schemas, shared types, event types
 ├── db/              # Drizzle schema + migrations + pgvector init
-├── config/          # Away mode policy, etc.
-├── docs/            # Progress reports, ADRs, MCP.md
+├── config/          # Away mode policy, prometheus.yml
+├── docs/            # MCP.md + progress report (docs/progress/faz-0.md)
 ├── examples/        # Example configurations (mcp/)
 └── scripts/         # Test & helper scripts (uai-mcp-server.ts, test-mcp.ts)
 ```
@@ -137,6 +170,7 @@ uai-agents/
 | Frontend | Next.js 15 (App Router) |
 | Database | PostgreSQL 16 + pgvector |
 | Cache/Bus | Redis 7 + in-process event bus |
+| Observability | Prometheus text-format `/metrics` (no auth, for scrapers) + Prometheus 2.52 in compose |
 | LLM | BYOK (OpenAI-compatible — OpenRouter/OpenAI/Gemini/Ollama/custom) |
 | ORM | Drizzle |
 
@@ -148,6 +182,7 @@ uai-agents/
 | Web Dashboard | 3001 |
 | PostgreSQL | 5434 |
 | Redis | 6380 |
+| Prometheus | 9090 |
 
 ---
 
@@ -156,26 +191,40 @@ uai-agents/
 ```bash
 pnpm dev                              # all packages in parallel (watch)
 pnpm --filter @uai/runtime dev        # runtime only
-pnpm test                             # vitest across all packages
-pnpm test:mcp                         # MCP end-to-end live test (stdio + HTTP)
+pnpm test                             # vitest across all packages — 46 tests
+pnpm test:mcp                         # MCP end-to-end live test (70 assertions, stdio + HTTP)
 pnpm mcp:serve                        # expose UAI as an MCP server
-pnpm lint                             # tsc --noEmit (in every package)
+pnpm lint                             # tsc --noEmit + eslint (in every package)
 pnpm db:generate                      # generate migration
 pnpm db:studio                        # Drizzle Studio
+pnpm db:rls                           # apply RLS policies (optional, see Security)
 ```
+
+**Test coverage (measured 2026-08-11):** `pnpm test` → **46 tests** — schema contracts
+(`packages/shared`, 14) · schema↔migration drift guard (`db`, 8) · learning + embedding
+resolution (`apps/runtime`, 24). Plus `pnpm test:mcp` → **70/70** end-to-end.
+CI (`.github/workflows/ci.yml`) runs lint → test → MCP → build on every push and PR.
 
 For details and architectural decisions → [`docs/`](./docs).
 
 ## Security
 
 - `X-Api-Key` auth is mandatory on all `/api/*` routes (`UAI_API_KEY`).
+  `GET /metrics` is intentionally unauthenticated (Prometheus scraper) and bound to 127.0.0.1 in
+  compose — close that port yourself if you expose the stack.
+- **Row Level Security is optional and OFF by default.** Policies live in
+  `db/migrations/manual/rls_policies.sql` and are **not** in the drizzle journal, so
+  `pnpm db:migrate` does not apply them (they need a table-owner/superuser connection). To enable:
+  ```bash
+  pnpm db:rls    # psql "$DATABASE_URL" -f db/migrations/manual/rls_policies.sql
+  ```
 - A real `.env` is **never** committed (`.gitignore`). Only `.env.example` is shared.
 - If you find a vulnerability, please reach out directly instead of opening a public issue.
 
 ## Contributing
 
 Contributions are welcome — see the [CONTRIBUTING.md](./CONTRIBUTING.md) guide.
-Search existing issues before opening a new one; PRs must pass `pnpm lint` + `pnpm test`.
+Search existing issues before opening a new one; PRs must pass `pnpm lint` + `pnpm test` (CI enforces).
 
 ## License
 

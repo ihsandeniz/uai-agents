@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, integer, jsonb, real, customType } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, integer, jsonb, real, customType, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 
 /** pgvector column type — stores float[] as PostgreSQL vector */
 const vector = customType<{ data: number[]; driverData: string; config: { dimensions: number } }>({
@@ -38,17 +39,28 @@ export const tasks = pgTable('tasks', {
   completedAt: timestamp('completed_at'),
 });
 
-export const memory = pgTable('memory', {
-  id: text('id').primaryKey(),
-  layer: text('layer').notNull(),
-  content: text('content').notNull(),
-  embedding: vector('embedding', { dimensions: 1536 }),
-  metadata: jsonb('metadata').notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-  lastAccessedAt: timestamp('last_accessed_at').defaultNow(),
-  accessCount: integer('access_count').default(0),
-});
+export const memory = pgTable(
+  'memory',
+  {
+    id: text('id').primaryKey(),
+    layer: text('layer').notNull(),
+    content: text('content').notNull(),
+    embedding: vector('embedding', { dimensions: 1536 }),
+    metadata: jsonb('metadata').notNull(),
+    createdAt: timestamp('created_at').defaultNow(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+    lastAccessedAt: timestamp('last_accessed_at').defaultNow(),
+    accessCount: integer('access_count').default(0),
+  },
+  (table) => [
+    // HNSW + cosine — semantik recall'ın (`memory/service.ts`) `<=>` sıralaması bu
+    // indekse dayanıyor. 2026-08-11 öncesinde indeks yalnız ham SQL'de tanımlıydı
+    // (`0002_pgvector_memory_embedding.sql`), yani drizzle'ın görüş alanı DIŞINDAydı:
+    // şema karşılaştırması onu görmediği için sessizce düşürülmesi mümkündü.
+    index('memory_embedding_idx')
+      .using('hnsw', sql`${table.embedding} vector_cosine_ops`),
+  ],
+);
 
 export const agentMessages = pgTable('agent_messages', {
   id: text('id').primaryKey(),

@@ -1,0 +1,39 @@
+name: CI
+
+# Bu workflow 2026-08-11'de eklendi. O tarihe kadar depoda YALNIZCA bağımlılık
+# taraması koşuyordu — yani "CI yeşil" rozeti kodun derlendiğini bile kanıtlamıyordu.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (tsc --noEmit + eslint)
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: MCP end-to-end (harici ağ/servis gerekmez)
+        run: pnpm test:mcp
+
+      - name: Build
+        run: pnpm build

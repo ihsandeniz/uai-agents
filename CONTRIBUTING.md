@@ -18,11 +18,17 @@ Teşekkürler! Bu proje açık kaynak (MIT) ve katkılara açık.
 ## PR Öncesi Kontrol
 
 ```bash
-pnpm lint     # tsc --noEmit — hata olmamalı
-pnpm test     # vitest — yeşil olmalı
+pnpm lint       # tsc --noEmit + eslint — hata olmamalı
+pnpm test       # vitest, tüm paketler — 46 test, yeşil olmalı
+pnpm test:mcp   # MCP'ye dokunduysan (70 assertion, harici ağ/servis gerekmez)
+pnpm build      # dist üretimi kırılmasın
 ```
 
+Aynı dördü `.github/workflows/ci.yml` içinde her push/PR'da koşar — yerelde geçmeyen PR CI'da da geçmez.
+
 - Davranış değiştiren PR'lar test içermeli.
+- **Şema/migration'a dokunduysan** `db/schema.test.ts` drift nöbetçisi seni uyarır: şemadaki her
+  tablo/kolon migration SQL'inde geçmeli ve her migration'ın `meta/` altında snapshot'ı olmalı.
 - Commit mesajları açıklayıcı olsun (tercihen `alan: özet` — ör. `runtime: webhook retry sınırı`).
 
 ## Hata & Güvenlik

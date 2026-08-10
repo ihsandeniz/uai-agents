@@ -29,6 +29,13 @@
       "when": 1746547200000,
       "tag": "0003_webhooks",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786397406457,
+      "tag": "0004_memory_embedding_idx",
+      "breakpoints": true
     }
   ]
 }

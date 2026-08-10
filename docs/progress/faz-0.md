@@ -3,6 +3,19 @@
 **Tarih:** 2026-05-04  
 **Durum:** Tamamlandı
 
+> 📅 **TARİHSEL BELGE — 2026-05-04'ün fotoğrafı, güncel durum değildir.**
+> İçeriği bilinçli olarak değiştirilmedi; aşağıdaki maddeler o gün doğruydu ama bugün
+> **artık geçerli değil** (denetim: 2026-08-11 doc-sync):
+> - *"7 tablo"* → bugün **9** (`webhooks`, `routing_records` eklendi)
+> - *"Anthropic SDK wrapper"* → LLM katmanı 2026-07-19'da **sağlayıcı-bağımsız** hâle geldi
+>   (BYOK, tek OpenAI-uyumlu istek yolu — `llm/config.ts`)
+> - *"pgvector extension henüz aktif değil"* → 2026-07-19'da otomatik (`db/init/00-extensions.sql`)
+> - *"Next.js dashboard sadece placeholder"* → Faz 4'te doldu, 2026-07-19'da v3 yeniden tasarlandı
+> - *"Yol B (Mastra Hybrid) seçildi — Faz 2'de Mastra entegrasyonu"* → **hiç olmadı.** Depoda
+>   `mastra` bağımlılığı yok; sistem framework'süz kaldı. Karar sessizce terk edilmiş.
+>
+> Güncel mimari için → [`README.md`](../../README.md) · [`docs/MCP.md`](../MCP.md)
+
 ## Ne Yapıldı
 
 - [x] Monorepo kurulumu (pnpm workspaces): `apps/runtime`, `apps/web`, `packages/shared`, `db`

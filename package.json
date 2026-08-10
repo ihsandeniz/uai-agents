@@ -1,7 +1,7 @@
 {
   "name": "uai",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.2.0",
   "description": "UAI Agents Team — Multi-Agent Orchestration System",
   "license": "MIT",
   "author": "İhsan Deniz Tüfekci",
@@ -16,6 +16,7 @@
     "test": "pnpm -r test",
     "db:generate": "pnpm --filter @uai/db generate",
     "db:migrate": "pnpm --filter @uai/db migrate",
+    "db:rls": "psql \"$DATABASE_URL\" -f db/migrations/manual/rls_policies.sql",
     "db:studio": "pnpm --filter @uai/db studio",
     "setup": "node scripts/setup.mjs",
     "infra": "docker compose up postgres redis -d --wait",

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "//": "Yalnız BUILD için: test dosyaları dist/'e derlenmesin. Lint (tsc --noEmit) ana tsconfig'i kullanır → testler tip kontrolünden geçmeye devam eder.",
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
+}

@@ -473,10 +473,23 @@ export default function Dashboard() {
             {/* right rail */}
             <div className="rail">
               {/* learning */}
-              {Object.keys(learningData).length > 0 && (
-                <div className="panel">
+              {/*
+                Panel eskiden veri yokken TAMAMEN kayboluyordu. 2026-08-07'de öğrenme
+                skorlarına zaman decay'i eklendikten sonra bu yanıltıcı hâle geldi:
+                yalnız çok eski kaydı olan ajan /api/learning çıktısından düşüyor, yani
+                bir süre boşta kalan sistemde panel sebepsizce ortadan kayboluyordu.
+                Boş durum artık MCP paneli gibi kendini açıklıyor.
+              */}
+              <div className="panel">
                   <div className="card-head"><span className="panel-title">Agent learning</span><span className="eyebrow">success</span></div>
                   <div className="card-body">
+                    {Object.keys(learningData).length === 0 && (
+                      <div className="empty" style={{ padding: '24px 8px' }}>
+                        No routing history yet.<br />
+                        Scores decay over time — agents with only stale records drop out
+                        and routing falls back to the LLM.
+                      </div>
+                    )}
                     {Object.entries(learningData).map(([agent, data]) => {
                       const meta = AGENT_META[agent] || { emoji: '🤖', role: 'Agent' };
                       const sr = data?.successRate ?? 0;
@@ -495,8 +508,7 @@ export default function Dashboard() {
                       );
                     })}
                   </div>
-                </div>
-              )}
+              </div>
 
               {/* MCP */}
               <div className="panel">

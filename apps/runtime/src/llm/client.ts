@@ -1,5 +1,5 @@
 import { logger } from '../logger.js';
-import { resolveProvider } from './config.js';
+import { resolveProvider, resolveEmbedProvider } from './config.js';
 import type {
   ChatMessage,
   CompletionOptions,
@@ -114,32 +114,68 @@ export async function chat(
   });
 }
 
+/**
+ * Semantik hafıza embedding'i — BYOK katmanı üzerinden (bkz. resolveEmbedProvider).
+ *
+ * Boş dizi dönmek "embedding yok, anahtar kelime aramasına düş" demektir. Bu
+ * fallback bilinçlidir; **sessiz** olması değildi — 2026-08-11 doc-sync'te kapalı
+ * olduğu hiçbir yerde görünmediği için ollama kurulumlarında semantik hafıza
+ * aylarca ölü kaldı. Artık kapalıysa açılışta WARN basılır (logEmbedStatus) ve
+ * ilk çağrıda bir kez daha gerekçesiyle uyarılır.
+ */
+let embedDisabledWarned = false;
+
 export async function embed(text: string): Promise<number[]> {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    logger.debug('OPENAI_API_KEY not set — skipping embedding, using keyword search');
+  const resolution = resolveEmbedProvider();
+
+  if (!resolution.enabled) {
+    if (!embedDisabledWarned) {
+      embedDisabledWarned = true;
+      logger.warn(
+        { code: resolution.reason.code },
+        `embed() devre dışı — ${resolution.reason.message}`,
+      );
+    }
     return [];
   }
 
+  const { baseURL, apiKey, model, dimensions } = resolution.provider;
+
   try {
-    const response = await fetch('https://api.openai.com/v1/embeddings', {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(`${baseURL}/embeddings`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
+      headers,
+      body: JSON.stringify({ model, input: text }),
     });
 
     if (!response.ok) {
-      logger.warn({ status: response.status }, 'embed() API error — falling back to keyword search');
+      logger.warn(
+        { status: response.status, baseURL, model },
+        'embed() API error — falling back to keyword search',
+      );
       return [];
     }
 
-    const data = (await response.json()) as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? [];
+    const data = (await response.json()) as { data?: Array<{ embedding: number[] }> };
+    const vector = data.data?.[0]?.embedding ?? [];
+
+    // Sağlayıcı beyan edilenden farklı boyut dönerse DB INSERT'i patlar → burada kes.
+    if (vector.length > 0 && vector.length !== dimensions) {
+      logger.error(
+        { expected: dimensions, got: vector.length, model, baseURL },
+        'embed() boyut uyuşmazlığı — vektör atıldı, anahtar kelime aramasına düşülüyor',
+      );
+      return [];
+    }
+
+    return vector;
   } catch (err) {
-    logger.warn({ err }, 'embed() failed — falling back to keyword search');
+    logger.warn({ err, baseURL, model }, 'embed() failed — falling back to keyword search');
     return [];
   }
 }

@@ -15,6 +15,7 @@ import { checkAuth } from './middleware/auth.js';
 import { checkRateLimit, checkStrictRateLimit } from './middleware/ratelimit.js';
 import { renderMetrics, recordHttpRequest } from './metrics.js';
 import { initMcp, shutdownMcp, getMcpRuntimeInfo } from './mcp/index.js';
+import { logEmbedStatus } from './llm/config.js';
 import { desc, eq } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import type { Task, AwayModePolicy } from '@uai/shared';
@@ -438,6 +439,10 @@ async function start() {
 
   // Load learning data from DB
   await learning.loadFromDb();
+
+  // Semantik hafızanın embedding yolu açık mı? Kapalıysa GÖRÜNÜR olsun —
+  // eskiden sessizce anahtar kelime aramasına düşüyordu (doc-sync 2026-08-11).
+  logEmbedStatus();
 
   // Initialize MCP tools BEFORE serving — worker agents are constructed per-task
   // in core.ts, so bridged MCP tools must be in TOOL_MAP before the first task.

@@ -1,11 +1,11 @@
 {
   "name": "@uai/runtime",
-  "version": "0.0.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file=../../.env src/server.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "cli": "tsx --env-file=../../.env src/cli.ts",
     "test": "vitest run",

@@ -22,6 +22,8 @@ sistemi yok (in-process event bus), LLM sağlayıcısı `.env`'den tek satırla 
 
 - 🧭 **Otomatik yönlendirme** — Core ajan görevi analiz edip doğru uzman ajanı kendi seçer
 - 🧠 **Semantik hafıza** — geçmiş işlemler embedding'e döner, benzer görevler pgvector ile bulunur
+  (embedding sağlayıcısı ayrı yapılandırılır; kapalıysa açılışta **uyarı basar** ve anahtar
+  kelime aramasına düşer → [Embedding](#embedding-semantik-hafıza))
 - 📈 **Öğrenen yönlendirme** — ajan performansı kalıcı tutulur, kararlar zamanla iyileşir
 - 🔀 **DAG tabanlı paralellik** — alt görevler bağımlılık grafiğiyle paralel yürür, deadlock koruması
 - 🔗 **Webhook** — sonuçlar HTTP POST ile dışa gider; 5 hatadan sonra otomatik devre dışı
@@ -89,7 +91,38 @@ OPENROUTER_API_KEY=sk-or-...
 | `ollama` | — | Lokal, **ücretsiz & sınırsız** (`http://localhost:11434`) |
 | `custom` | `LLM_API_KEY` + `LLM_BASE_URL` | LM Studio / Groq / Together / vLLM |
 
-Tüm katman OpenAI-uyumlu tek istek arayüzüne indirgenmiştir (`apps/runtime/src/llm/`).
+Tüm **sohbet/tamamlama** katmanı OpenAI-uyumlu tek istek arayüzüne indirgenmiştir
+(`apps/runtime/src/llm/`).
+
+### Embedding (semantik hafıza)
+
+Embedding **ayrı bir yoldur** — her sağlayıcı `/embeddings` sunmaz (ör. OpenRouter sunmuyor)
+ve boyutlar sağlayıcıya göre değişir. `memory.embedding` kolonu `vector(1536)` olduğu için
+farklı boyutlu bir model **kabul edilmez**.
+
+Çözümleme sırası (`resolveEmbedProvider`, `llm/config.ts`):
+
+| # | Kaynak | Ne zaman |
+|---|---|---|
+| 1 | `EMBED_ENABLED=false` | bilinçli kapatma |
+| 2 | `EMBED_BASE_URL` + `EMBED_MODEL` (+`EMBED_API_KEY`, `EMBED_DIMENSIONS`) | açık ayar — her şeyi ezer |
+| 3 | Aktif `LLM_PROVIDER` | sağlayıcı embedding sunuyorsa (BYOK'a bağlı yol) |
+| 4 | `OPENAI_API_KEY` | yedek (geriye dönük uyum) |
+| 5 | — | **kapalı**, gerekçesiyle |
+
+Kapalıysa sistem **susmaz**: açılışta `WARN` basar (`semantik hafıza KAPALI — …`) ve neyin
+eksik olduğunu söyler. Kayıtlar anahtar kelime aramasıyla bulunmaya devam eder.
+
+```bash
+# ollama ile tamamen lokal + 1536 boyutlu bir embedding endpoint'i
+LLM_PROVIDER=ollama
+EMBED_BASE_URL=http://localhost:11434/v1
+EMBED_MODEL=mxbai-embed-large   # 1024 boyutlu modeller reddedilir — 1536 gerekir
+```
+
+> ℹ️ 2026-08-11 öncesinde `embed()` bu katmanın **dışındaydı**: sağlayıcı ne olursa olsun
+> doğrudan `api.openai.com`'a gidiyor, anahtar yoksa **sessizce** boş vektör dönüyordu — yani
+> önerilen ollama kurulumunda semantik hafıza hiç çalışmıyor ama hiçbir yerde görünmüyordu.
 
 ---
 
@@ -122,8 +155,8 @@ uai-agents/
 │   └── web/         # Next.js 15 dashboard
 ├── packages/shared/ # Zod şemaları, ortak tipler, event tipleri
 ├── db/              # Drizzle şema + migration'lar + pgvector init
-├── config/          # Away mode policy vb.
-├── docs/            # İlerleme raporları, ADR'ler, MCP.md
+├── config/          # Away mode policy, prometheus.yml
+├── docs/            # MCP.md + ilerleme raporu (docs/progress/faz-0.md)
 ├── examples/        # Örnek yapılandırmalar (mcp/)
 └── scripts/         # Test & yardımcı scriptler (uai-mcp-server.ts, test-mcp.ts)
 ```
@@ -136,6 +169,7 @@ uai-agents/
 | Frontend | Next.js 15 (App Router) |
 | Database | PostgreSQL 16 + pgvector |
 | Cache/Bus | Redis 7 + in-process event bus |
+| Observability | Prometheus text-format `/metrics` (auth'suz, scraper için) + compose'da Prometheus 2.52 |
 | LLM | BYOK (OpenAI-uyumlu — OpenRouter/OpenAI/Gemini/Ollama/custom) |
 | ORM | Drizzle |
 
@@ -147,6 +181,7 @@ uai-agents/
 | Web Dashboard | 3001 |
 | PostgreSQL | 5434 |
 | Redis | 6380 |
+| Prometheus | 9090 |
 
 ---
 
@@ -155,26 +190,40 @@ uai-agents/
 ```bash
 pnpm dev                              # tüm paketler paralel (watch)
 pnpm --filter @uai/runtime dev        # sadece runtime
-pnpm test                             # tüm paketlerde vitest
-pnpm test:mcp                         # MCP uçtan uca canlı test (stdio + HTTP)
+pnpm test                             # tüm paketlerde vitest — 46 test
+pnpm test:mcp                         # MCP uçtan uca canlı test (70 assertion, stdio + HTTP)
 pnpm mcp:serve                        # UAI'yi MCP sunucusu olarak sun
-pnpm lint                             # tsc --noEmit (her pakette)
+pnpm lint                             # tsc --noEmit + eslint (her pakette)
 pnpm db:generate                      # migration üret
 pnpm db:studio                        # Drizzle Studio
+pnpm db:rls                           # RLS politikalarını uygula (opsiyonel, bkz. Güvenlik)
 ```
+
+**Test kapsamı (2026-08-11 ölçümü):** `pnpm test` → **46 test** — şema sözleşmeleri
+(`packages/shared`, 14) · şema↔migration drift nöbetçisi (`db`, 8) · öğrenen yönlendirme +
+embedding çözümlemesi (`apps/runtime`, 24). Ayrıca `pnpm test:mcp` → **70/70** uçtan uca.
+CI (`.github/workflows/ci.yml`) her push ve PR'da lint → test → MCP → build koşar.
 
 Ayrıntı ve mimari kararlar için → [`docs/`](./docs).
 
 ## Güvenlik
 
 - `X-Api-Key` auth tüm `/api/*` rotalarında zorunlu (`UAI_API_KEY`).
+  `GET /metrics` bilinçli olarak auth dışıdır (Prometheus scraper); compose'da 127.0.0.1'e bağlıdır —
+  dışa açık bir ortama alıyorsan bu portu kendin kapat.
+- **Row Level Security opsiyoneldir ve varsayılan olarak KAPALIDIR.** Politikalar
+  `db/migrations/manual/rls_policies.sql` içinde durur ve drizzle journal'ında **yoktur** —
+  yani `pnpm db:migrate` bunları uygulamaz (tablo sahibi/superuser bağlantısı ister). Açmak için:
+  ```bash
+  pnpm db:rls    # psql "$DATABASE_URL" -f db/migrations/manual/rls_policies.sql
+  ```
 - Gerçek `.env` **asla** commit'lenmez (`.gitignore`). Sadece `.env.example` paylaşılır.
 - Bir açık bulursan lütfen public issue yerine doğrudan iletişime geç.
 
 ## Katkı
 
 Katkılar memnuniyetle karşılanır — [CONTRIBUTING.md](./CONTRIBUTING.md) rehberine bak.
-Issue açmadan önce mevcut issue'ları ara; PR'lar `pnpm lint` + `pnpm test` geçmeli.
+Issue açmadan önce mevcut issue'ları ara; PR'lar `pnpm lint` + `pnpm test` geçmeli (CI zorlar).
 
 ## Lisans
 

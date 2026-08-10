@@ -6,6 +6,7 @@
 -- tabloda true değil). Bilinçli tercih: tablo sahibi/superuser bağlantısı ister.
 --
 -- Elle çalıştır:
+--   pnpm db:rls          (2026-08-11'de eklendi — eskiden yalnız bu yorumda yazıyordu)
 --   psql "$DATABASE_URL" -f db/migrations/manual/rls_policies.sql
 --
 -- Eskiden adı `0004_rls_policies.sql` idi; numaralı sıraya benzediği için
