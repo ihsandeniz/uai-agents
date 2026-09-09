@@ -20,16 +20,19 @@ overrides:
   # GHSA-mh99-v99m-4gvg (high) · GHSA-rgw5-rvv9-x895 (high) — iki ayrı major zinciri
   brace-expansion@1: ^1.1.18
   brace-expansion@5: ^5.0.9
-  # GHSA-5p4m-2wfm-xmqj (high) — 4.x içinde kalıyor
-  js-yaml: ^4.3.1
+  # GHSA-5p4m-2wfm-xmqj (high) · GHSA-mgwx-5m88-wjhw (high) — 4.x içinde kalıyor
+  js-yaml: ^4.3.2
   # GHSA-f88m-g3jw-g9cj (high) — next'in optionalDependency'si (^0.34.3 pini yamayı almıyor)
-  sharp: ^0.35.3
-  # GHSA-7p8r-x3mc-p8w7 (high) — ajv > fast-uri; 3.x içinde kalıyor (4.x major)
-  fast-uri: ^3.1.5
+  sharp: ^0.35.4
+  # GHSA-7p8r-x3mc-p8w7 · GHSA-f65p-4m7j-42xc · GHSA-fph4-wmhf-6fwf · GHSA-jqff-g426-hqxp (high)
+  # ajv > fast-uri; 3.x içinde kalıyor (4.x major)
+  fast-uri: ^3.1.6
+  # GHSA-9m6j-fcg5-2442 · GHSA-8cvw-9m2g-x9hx (moderate) — MCP SDK > express > qs
+  qs: ^6.16.0
   # GHSA-mwp4-54f8-5fhr (high) · GHSA-4xrf-jv44-h6hh · GHSA-22jq-vg5j-6vgg
   ip-address: ^10.4.0
   # GHSA-8j4g-w8fx-2239 · GHSA-f23p-vx2j-j53r · GHSA-54fx-42gc-7vw4 · GHSA-79qm-7rj5-m7r9
-  hono: ^4.13.1
+  hono: ^4.13.7
   # GHSA-frvp-7c67-39w9 — 1.x hattında yama YOK; MCP SDK 1.30 zaten "^1.19.9 || ^2.0.5" diyor
   "@hono/node-server": ^2.1.0
   # GHSA-67mh-4wv8-2f99 — terk edilmiş @esbuild-kit (drizzle-kit taşıyor), esbuild ~0.18.20'ye pinli.
